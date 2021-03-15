@@ -309,24 +309,10 @@ def listFromTransactionValue(value):
 
 def getDateRange(cycle, year):
     # now determine the correct start and end time epoch units based on this.
-    startMonth = 1
-
-    if cycle == 'C2':
-        startMonth = 3
-    elif cycle == 'C3':
-        startMonth = 5
-    elif cycle == 'C4':
-        startMonth = 7
-    elif cycle == 'C5':
-        startMonth = 9
-    elif cycle == 'C6':
-        startMonth = 11
-
+    startMonth = cycle * 2 - 1
     dateOpen = int(time.mktime((year, startMonth, 1, 0, 0, 0, 0, 0, 0)))
     dateClose = int(time.mktime(
         (year, startMonth + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
-
-    # click.echo(f'dateRange: {dateOpen} ... {dateClose}')
     return (dateOpen, dateClose)
 
 
@@ -382,8 +368,8 @@ def loadConfig(isDev):
 @click.command()
 @click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear), \
     help='The year in which the tickets were created')
-@click.option('--cycle', '-c', prompt='Cycle', type=click.Choice(AllowedCycles, case_sensitive=False), \
-    help='Period in which the tickets were created')
+@click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6), \
+    help='Period (1...6) in which the tickets were created')
 @click.option('--projects', '-p', prompt='Project tags (comma-separated)', \
     help='Comma-separated list of project tags (e.g. "messaging,client_success")')
 @click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify params on config.ini)')
