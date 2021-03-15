@@ -80,7 +80,7 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
         for ticket in result['data']:
             strTicket = str(ticket['id'])
             tickets[strTicket] = {
-                'id': f'T{strTicket}',
+                'id': ticket['id'],
                 'phid': ticket['phid'],
                 'title': ticket['fields']['name'],
                 'status': ticket['fields']['status']['name'],
@@ -92,26 +92,42 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
         if after == None:
             break
 
-    allKeys = list(tickets.keys())
-    # click.echo(f'{len(tickets)} tickets fetched: {", ".join(allKeys)}')
+    # get timestamps from transactions
+    # break it down
 
     idNumbers = [int(id) for id in list(tickets.keys())]
-    timestamps = getTransactions(phab, projectSlugs, idNumbers)
+    click.echo(f'{len(idNumbers)} tickets found')
 
-    if len(timestamps) > 0:
-        mergeTicketDicts(tickets, timestamps)
-        fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
-        csvs = generateCSVs(tickets, fields)
-        writeCSVsToFile(csvs, fields)
-    else:
-        click.echo('No data found! Try a different query.')
+    chunkedIdNumbers = list(chunks(idNumbers, 25))
+    fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
 
+    for idChunk in chunkedIdNumbers:
+
+        click.echo('.' * page)
+        page = page + 1
+        timestamps = getTransactions(phab, projectSlugs, idChunk)
+        if len(timestamps) > 0:
+            mergeTicketDicts(tickets, timestamps)
+        else:
+            click.echo('No data found! Try a different query.')
+
+
+    csvs = generateCSVs(tickets, fields)
+    writeCSVsToFile(csvs, fields)
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 def fieldValuesTuple(ticket, fields):
     fieldValues = []
     for fieldname in fields:
-        if fieldname in ['phid', 'status', 'title']:
-            fieldValues.append(ticket.get(fieldname, '-'))
+        if fieldname in ['phid', 'status', 'title', 'id']:
+            value = ticket.get(fieldname, '-')
+            if fieldname == 'id':
+                value = 'T' + str(value)
+            fieldValues.append(value)
         else:
             fieldValues.append(ticket.get(fieldname, 0))
     return tuple(fieldValues)
@@ -122,7 +138,7 @@ def generateCSVs(tickets, fields):
     formatElements = []
 
     for fieldname in fields:
-        if fieldname in ['phid', 'id', 'status', 'title']:
+        if fieldname in ['phid', 'status', 'title', 'id']:
             formatElements.append('%s')
         else:
             formatElements.append('%d')
@@ -135,7 +151,6 @@ def generateCSVs(tickets, fields):
     click.echo(','.join(fields))
 
     for _, ticket in tickets.items():
-        # title = ticket['title'][:titleMaxLen]  # .ljust(titleMaxLen, ' ')
         line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
         click.echo(line)
         line += '\n'
@@ -173,8 +188,7 @@ def writeCSVsToFile(csvs, fields):
 
 
 def mergeTicketDicts(intoDict, fromDict):
-    keys = intoDict.keys()
-    for key, value in intoDict.items():
+    for key, _ in fromDict.items():
         intoDict[key].update(fromDict[key])
     return intoDict
 
@@ -189,7 +203,7 @@ def getTransactions(phab, projectSlugs, ids=[]):
     # Note: maniphest.gettasktransactions is a deprecated method in
     # Conduit. But we lack other options to get a list of transactions for
     # multiple tickets in a single call.
-    click.echo(f'Fetching transaction data from {count} tickets...')
+    click.echo(f'Pulling transaction data from {count} tickets...')
     transactionsDict = phab.maniphest.gettasktransactions(ids=ids).response
 
     ids = list(transactionsDict.keys())
@@ -224,7 +238,6 @@ def getTransactions(phab, projectSlugs, ids=[]):
                         timestamps[id][f'qa_verified'] = timestamp
                 for projectSlug in projectSlugs:
                     if isTagged(txn, projectSlug):
-                        # slug = ProjectPHIDMap[projectPHID]
                         timestamps[id][f'tagged_{projectSlug}'] = timestamp
 
     return timestamps
@@ -239,12 +252,6 @@ def isClosedTxn(txn):
     return txn['transactionType'] == 'status' and \
         isStatusOpen(txn['newValue']) == False and \
         isStatusOpen(txn['oldValue']) == True
-
-
-# def isTagged(txn, projectPHID):
-#     return txn['transactionType'] == 'core:edge' and \
-#         not projectPHID in txn['oldValue'] and \
-#         projectPHID in txn['newValue']
 
 def isTagged(txn, slug):
     projectPHID = ProjectPHIDMap[slug]
@@ -302,25 +309,22 @@ def listFromTransactionValue(value):
 
 def getDateRange(cycle, year):
     # now determine the correct start and end time epoch units based on this.
-    monthOpen = 1
-    monthClose = 2  # we'll subtract one second from this to generate the last possible date for the cycle
-
-    openClose = (1, 2)
+    startMonth = 1
 
     if cycle == 'C2':
-        openClose = (3, 4)
+        startMonth = 3
     elif cycle == 'C3':
-        openClose = (5, 6)
+        startMonth = 5
     elif cycle == 'C4':
-        openClose = (7, 8)
+        startMonth = 7
     elif cycle == 'C5':
-        openClose = (9, 10)
+        startMonth = 9
     elif cycle == 'C6':
-        openClose = (11, 12)
+        startMonth = 11
 
-    dateOpen = int(time.mktime((year, openClose[0], 1, 0, 0, 0, 0, 0, 0)))
+    dateOpen = int(time.mktime((year, startMonth, 1, 0, 0, 0, 0, 0, 0)))
     dateClose = int(time.mktime(
-        (year, openClose[0] + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
+        (year, startMonth + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
 
     # click.echo(f'dateRange: {dateOpen} ... {dateClose}')
     return (dateOpen, dateClose)
@@ -382,7 +386,7 @@ def loadConfig(isDev):
     help='Period in which the tickets were created')
 @click.option('--projects', '-p', prompt='Project tags (comma-separated)', \
     help='Comma-separated list of project tags (e.g. "messaging,client_success")')
-@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance')
+@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify params on config.ini)')
 @click.option('--track-all-projects', is_flag=True, help='If enabled, will track tagged timestamps for each project named in PHIDs in config.ini')
 def cli(cycle, year, projects, dev, track_all_projects):
     phab = loadConfig(dev)
