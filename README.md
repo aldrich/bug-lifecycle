@@ -29,3 +29,13 @@ venv ❯ lifecycle -c 6 -y 2020 -p capacitor,messaging
 ```
 
 This pulls all tickets *created* in 2020 Cycle 6 (November-December) and that have the tags #capacitor AND #messaging.
+
+The output should go to a CSV file that looks like the following:
+
+```
+id,phid,status,priority,created,closed,qa_verified,tagged_capacitor,tagged_client_success,tagged_data_science_infrastructure,tagged_design,tagged_freelancer_groups,tagged_freightlancer_x_local_jobs,tagged_messaging,tagged_qa_verified
+T235313,PHID-TASK-jzzfv3favkg2nepovli7,Resolved,100,1615565541,1615777558,0,0,0,0,0,0,0,0,0
+T234601,PHID-TASK-mm7nfmyi3zupjr6pm7fc,Open,100,1614911477,0,0,0,0,0,0,0,0,0,0
+T235398,PHID-TASK-xk4e4ephgpjgirg2fdsj,Open,90,1615775295,0,0,0,0,0,0,0,0,0,0
+T235393,PHID-TASK-xngr5ch3nwbkbwqdcs4h,Open,90,1615773431,0,0,0,0,0,0,0,0,0,0
+```
