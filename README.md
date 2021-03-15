@@ -25,7 +25,7 @@ In subsequent calls, it is sufficient to just go to the directory of the script 
 Please also check the options available from `lifecycle --help`. This is an example:
 
 ```
-venv ❯ lifecycle -c c6 -y 2020 -p capacitor,messaging
+venv ❯ lifecycle -c 6 -y 2020 -p capacitor,messaging
 ```
 
 This pulls all tickets *created* in 2020 Cycle 6 (November-December) and that have the tags #capacitor AND #messaging.
