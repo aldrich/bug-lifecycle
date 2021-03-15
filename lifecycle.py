@@ -10,7 +10,7 @@ phidMatcher = re.compile(r'PHID-BUGC-([a-zA-Z-_]+)')
 
 ProjectPHIDMap = {}
 QAVerifiedProjectPHID = ''
-
+CustomFieldsEnabled = []
 
 # Constants
 CsvOutputPath = ''
@@ -21,24 +21,29 @@ MinimumYear = 2020
 MaximumYear = 2021
 
 
-def getTickets(phab, cycle, year, projectsStr):
+def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
 
     dateRange = getDateRange(cycle, year)
     dateStart = dateRange[0]
     dateEnd = dateRange[1]
 
-    projectSlugs = getSlugs(projectsStr)
+    projectSlugs = getSlugs(projectsStr) if projectsStr else ''
     projectPHIDs = [ProjectPHIDMap[slug] for slug in projectSlugs]
 
     constraints = {}
 
-    if not projectSlugs:
-        click.echo(
-            f'Please specify at least one project from the list: {list(ProjectPHIDMap.keys())}')
-        return
+    # if not projectSlugs:
+    #     click.echo(
+    #         f'Please specify at least one project from the list: {list(ProjectPHIDMap.keys())}')
+    #     return
 
-    if projectPHIDs:
+    if not projectSlugs:
+        click.echo('No project filters given. Restricting ticket search to bug subtypes.')
+        constraints['subtypes'] = ['bugcategorization', 'bugcat']
+    else:
+        # projects is an ALL-search. Only results which match all projectPHIDs are returned
         constraints['projects'] = projectPHIDs
+        # we can decide later if subtypes can optionally be applied to this case as well
 
     # note: dateStart and dateEnd referring to tickets CREATED within this period
     if dateStart:
@@ -51,12 +56,17 @@ def getTickets(phab, cycle, year, projectsStr):
 
     tickets = {}
 
+    # add all the other slugs not named (if desired)
+    if trackAllProjects:
+        click.echo('Tracking timestamps for all listed projects')
+        projectSlugs = list(ProjectPHIDMap.keys())
+
     # Fetch ticket info through `maniphest.search`:
     # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
 
     after = None
     page = 1
-    click.echo(f'Fetching tickets from project:')
+    click.echo(f'Pulling Maniphest tickets...')
     while True:
         click.echo('.' * page)
         page = page + 1
@@ -65,12 +75,12 @@ def getTickets(phab, cycle, year, projectsStr):
             # attachments=attachments,
             limit=FetchBatchSize, after=after)
         after = result['cursor']['after']
-
         # dump(result.response)
 
         for ticket in result['data']:
-            tickets[str(ticket['id'])] = {
-                'id': ticket['id'],
+            strTicket = str(ticket['id'])
+            tickets[strTicket] = {
+                'id': f'T{strTicket}',
                 'phid': ticket['phid'],
                 'title': ticket['fields']['name'],
                 'status': ticket['fields']['status']['name'],
@@ -112,23 +122,22 @@ def generateCSVs(tickets, fields):
     formatElements = []
 
     for fieldname in fields:
-        if fieldname in ['phid', 'status', 'title']:
+        if fieldname in ['phid', 'id', 'status', 'title']:
             formatElements.append('%s')
         else:
             formatElements.append('%d')
 
-    # formatStr could be smt like '%d;%s;%s;%d;%d;%d;%d;%d;%d'
-    formatStr = ';'.join(formatElements)
+    # formatStr could be smt like '%d,%s,%s,%d,%d,%d,%d,%d,%d'
+    formatStr = ','.join(formatElements)
 
     # print the header on to the console
     click.echo('---')
-    click.echo(';'.join(fields))
+    click.echo(','.join(fields))
 
     for _, ticket in tickets.items():
         # title = ticket['title'][:titleMaxLen]  # .ljust(titleMaxLen, ' ')
         line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
         click.echo(line)
-
         line += '\n'
         csvs.append(line)
 
@@ -150,60 +159,12 @@ def ticketFieldsBase():
 
 def ticketFields(projects):
     return [f'tagged_{value}' for value in projects]
-    pass
 
 def ticketFieldsCustom():
-    return [
-        # 'browser_chrome',
-        # 'browser_firefox',
-        # 'browser_ie',
-        # 'browser_others',
-        # 'browser_safari',
-        # 'bug_reporter_automated_tests',
-        # 'bug_reporter_internal_staff',
-        # 'bug_reporter_qa',
-        # 'bug_reporter_users',
-        # 'environment_all',
-        # 'environment_development',
-        # 'environment_production',
-        # 'environment_sandbox',
-        # 'environment_staging',
-        # 'platform_android',
-        # 'platform_desktop_app',
-        # 'platform_ios',
-        # 'platform_linux',
-        # 'platform_mac',
-        # 'platform_others',
-        # 'platform_windows',
-        # 'root_cause_api_usage',
-        # 'root_cause_backend_business_logic',
-        # 'root_cause_backend_type_issue',
-        # 'root_cause_business_logic',
-        # 'root_cause_database_sql_queries',
-        # 'root_cause_design_specification',
-        # 'root_cause_frontend',
-        # 'root_cause_frontend_configuration',
-        # 'root_cause_infrastructure_configuration',
-        # 'root_cause_infrastructure_failure',
-        # 'root_cause_operational_error',
-        # 'root_cause_product_specification',
-        # 'root_cause_test_script_issue',
-        # 'root_cause_third_party_dependency_failure',
-        # 'root_cause_third_party_integration',
-        # 'type_of_bug_bad_ux',
-        # 'type_of_bug_browser_compatibility',
-        # 'type_of_bug_error_handling',
-        # 'type_of_bug_functionality',
-        # 'type_of_bug_localization',
-        # 'type_of_bug_performance',
-        # 'type_of_bug_ui',
-    ]
-
+    return CustomFieldsEnabled
 
 def writeCSVsToFile(csvs, fields):
-    header = ';'.join(fields)
-    # header = 'id;phid;status;priority;created;closed;tagged;platform_linux;platform_mac'
-
+    header = ','.join(fields)
     with open(CsvOutputPath, 'w') as csvFile:
         click.echo("Dumping CSV data...")
         csvFile.write(f'{header}\n')
@@ -343,25 +304,23 @@ def getDateRange(cycle, year):
     # now determine the correct start and end time epoch units based on this.
     monthOpen = 1
     monthClose = 2  # we'll subtract one second from this to generate the last possible date for the cycle
-    if cycle == 'C2':
-        monthOpen = 3
-        monthClose = 4
-    elif cycle == 'C3':
-        monthOpen = 5
-        monthClose = 6
-    elif cycle == 'C4':
-        monthOpen = 7
-        monthClose = 8
-    elif cycle == 'C5':
-        monthOpen = 9
-        monthClose = 10
-    elif cycle == 'C6':
-        monthOpen = 11
-        monthClose = 12
 
-    dateOpen = int(time.mktime((year, monthOpen, 1, 0, 0, 0, 0, 0, 0)))
+    openClose = (1, 2)
+
+    if cycle == 'C2':
+        openClose = (3, 4)
+    elif cycle == 'C3':
+        openClose = (5, 6)
+    elif cycle == 'C4':
+        openClose = (7, 8)
+    elif cycle == 'C5':
+        openClose = (9, 10)
+    elif cycle == 'C6':
+        openClose = (11, 12)
+
+    dateOpen = int(time.mktime((year, openClose[0], 1, 0, 0, 0, 0, 0, 0)))
     dateClose = int(time.mktime(
-        (year, monthOpen + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
+        (year, openClose[0] + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
 
     # click.echo(f'dateRange: {dateOpen} ... {dateClose}')
     return (dateOpen, dateClose)
@@ -378,6 +337,7 @@ def loadConfig(isDev):
     global QAVerifiedProjectPHID
     global FetchBatchSize
     global CsvOutputPath
+    global CustomFieldsEnabled
 
     click.echo('Loading config...')
 
@@ -405,20 +365,28 @@ def loadConfig(isDev):
     phabAPIToken = config[phabricatorConfigKey]['api_token']
     phabHost = config[phabricatorConfigKey]['host']
 
+    customFieldsSection = config['Custom_Fields']
+    CustomFieldsEnabled = []
+    for key in customFieldsSection.keys():
+        if customFieldsSection[key] == '1':
+            CustomFieldsEnabled.append(key)
+
+
     click.echo('Configuration loaded.')
     return Phabricator(host=phabHost, token=phabAPIToken)
 
 @click.command()
-@click.option('--cycle', '-c', prompt='Cycle', type=click.Choice(AllowedCycles, case_sensitive=False), \
-    help='Period in which the tickets were created')
 @click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear), \
     help='The year in which the tickets were created')
+@click.option('--cycle', '-c', prompt='Cycle', type=click.Choice(AllowedCycles, case_sensitive=False), \
+    help='Period in which the tickets were created')
 @click.option('--projects', '-p', prompt='Project tags (comma-separated)', \
     help='Comma-separated list of project tags (e.g. "messaging,client_success")')
-@click.option('--dev', is_flag=True)
-def cli(cycle, year, projects, dev):
+@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance')
+@click.option('--track-all-projects', is_flag=True, help='If enabled, will track tagged timestamps for each project named in PHIDs in config.ini')
+def cli(cycle, year, projects, dev, track_all_projects):
     phab = loadConfig(dev)
-    getTickets(phab, cycle, year, projects)
+    getTickets(phab, cycle, year, projects, track_all_projects)
 
 if __name__ == '__main__':
     cli()
