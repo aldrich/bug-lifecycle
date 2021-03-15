@@ -1,45 +1,44 @@
 import click
+import configparser
 import json
 import re
 import time
 from phabricator import Phabricator
 
-# Prod
-phabAPIToken = "api-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-phabHost = "https://phabricator.tools.flnltd.com/api/"
-projectPHIDsTracked = ['PHID-PROJ-2iilroan6csa7qrk4rph']  # Capacitor
-
-# My local
-# phabAPIToken = "api-tnjkevfufq4qcgxvwa3wzpnt3mke"
-# phabHost = "http://phabricator.local:8081/api/"
-# projectPHIDsTracked = ['PHID-PROJ-r5j6oaiz4mwg2tjmx2pg']
-#    'PHID-PROJ-zp3j4coyacc543jafokw']  # de Grails, Caioni's
-
-phab = Phabricator(host=phabHost, token=phabAPIToken)
-
-# for timestamps use https://www.epochconverter.com/
-csvOutputPath = '/Users/aldrichco/Desktop/output.csv'
-titleMaxLen = 30
-limit = 50  # tickets fetched per batch (NOT the total tickets to fetch)
-
-allowedCycles = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
-minimumYear = 2020
-maximumYear = 2021
-
+# Globals
 phidMatcher = re.compile(r'PHID-BUGC-([a-zA-Z-_]+)')
 
-# tags=[QAVerified, Capacitor]
-# date_range (like cycle / year)
-# status=open
-# min_priority=normal (or low, wishlist, high, unbreak now)
+ProjectPHIDMap = {}
+QAVerifiedProjectPHID = ''
 
 
-def getTickets(dateStart, dateEnd):
-    # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
+# Constants
+CsvOutputPath = ''
+TitleMaxLen = 30
+FetchBatchSize = 50  # tickets fetched per batch (NOT the total tickets to fetch)
+AllowedCycles = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
+MinimumYear = 2020
+MaximumYear = 2021
+
+
+def getTickets(phab, cycle, year, projectsStr):
+
+    dateRange = getDateRange(cycle, year)
+    dateStart = dateRange[0]
+    dateEnd = dateRange[1]
+
+    projectSlugs = getSlugs(projectsStr)
+    projectPHIDs = [ProjectPHIDMap[slug] for slug in projectSlugs]
+
     constraints = {}
 
-    if projectPHIDsTracked:
-        constraints['projects'] = projectPHIDsTracked
+    if not projectSlugs:
+        click.echo(
+            f'Please specify at least one project from the list: {list(ProjectPHIDMap.keys())}')
+        return
+
+    if projectPHIDs:
+        constraints['projects'] = projectPHIDs
 
     # note: dateStart and dateEnd referring to tickets CREATED within this period
     if dateStart:
@@ -47,24 +46,24 @@ def getTickets(dateStart, dateEnd):
     if dateEnd:
         constraints['createdEnd'] = dateEnd
 
-    click.echo(constraints)
-    # adding attachments could significantly add to the query time!
-    # attachments = {
-    #     'projects': 1 # access by result['data']['attachments']['projects']['projectPHIDs']
-    # }
+    click.echo(f'Valid project slugs in query: {projectSlugs}.')
+    click.echo(f'Constraints to maniphest.search: {json.dumps(constraints)}')
 
     tickets = {}
 
-    # get tickets through maniphest.search
+    # Fetch ticket info through `maniphest.search`:
+    # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
+
     after = None
     page = 1
+    click.echo(f'Fetching tickets from project:')
     while True:
-        click.echo(f'Fetching tickets from project, part {page}...')
+        click.echo('.' * page)
         page = page + 1
         result = phab.maniphest.search(
             constraints=constraints,
             # attachments=attachments,
-            limit=limit, after=after)
+            limit=FetchBatchSize, after=after)
         after = result['cursor']['after']
 
         # dump(result.response)
@@ -87,11 +86,11 @@ def getTickets(dateStart, dateEnd):
     # click.echo(f'{len(tickets)} tickets fetched: {", ".join(allKeys)}')
 
     idNumbers = [int(id) for id in list(tickets.keys())]
-    timestamps = getTransactions(idNumbers)
+    timestamps = getTransactions(phab, projectSlugs, idNumbers)
 
     if len(timestamps) > 0:
         mergeTicketDicts(tickets, timestamps)
-        fields = ticketFieldsBase() + ticketFieldsCustom()
+        fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
         csvs = generateCSVs(tickets, fields)
         writeCSVsToFile(csvs, fields)
     else:
@@ -112,8 +111,6 @@ def generateCSVs(tickets, fields):
     csvs = []
     formatElements = []
 
-    click.echo(';'.join(fields))
-
     for fieldname in fields:
         if fieldname in ['phid', 'status', 'title']:
             formatElements.append('%s')
@@ -123,11 +120,19 @@ def generateCSVs(tickets, fields):
     # formatStr could be smt like '%d;%s;%s;%d;%d;%d;%d;%d;%d'
     formatStr = ';'.join(formatElements)
 
+    # print the header on to the console
+    click.echo('---')
+    click.echo(';'.join(fields))
+
     for _, ticket in tickets.items():
         # title = ticket['title'][:titleMaxLen]  # .ljust(titleMaxLen, ' ')
-        line = f'{formatStr}\n' % fieldValuesTuple(ticket, fields)
-        csvs.append(line)
+        line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
         click.echo(line)
+
+        line += '\n'
+        csvs.append(line)
+
+    click.echo('---')
     return csvs
 
 
@@ -140,8 +145,12 @@ def ticketFieldsBase():
         'priority',
         'created',
         'closed',
-    ] + [f'tagged_{PHID}' for PHID in projectPHIDsTracked]
+        'qa_verified',
+    ]
 
+def ticketFields(projects):
+    return [f'tagged_{value}' for value in projects]
+    pass
 
 def ticketFieldsCustom():
     return [
@@ -195,11 +204,11 @@ def writeCSVsToFile(csvs, fields):
     header = ';'.join(fields)
     # header = 'id;phid;status;priority;created;closed;tagged;platform_linux;platform_mac'
 
-    with open(csvOutputPath, 'w') as csvFile:
+    with open(CsvOutputPath, 'w') as csvFile:
         click.echo("Dumping CSV data...")
         csvFile.write(f'{header}\n')
         csvFile.writelines(csvs)
-        click.echo(f'Ticket data written out to {csvOutputPath}.')
+        click.echo(f'Ticket data written out to {CsvOutputPath}.')
 
 
 def mergeTicketDicts(intoDict, fromDict):
@@ -209,13 +218,16 @@ def mergeTicketDicts(intoDict, fromDict):
     return intoDict
 
 
-def getTransactions(ids=[]):
+def getTransactions(phab, projectSlugs, ids=[]):
     # ids should be of list<int> type
     count = len(ids)
     if count < 1:
         click.echo('No tickets found.')
         return []
 
+    # Note: maniphest.gettasktransactions is a deprecated method in
+    # Conduit. But we lack other options to get a list of transactions for
+    # multiple tickets in a single call.
     click.echo(f'Fetching transaction data from {count} tickets...')
     transactionsDict = phab.maniphest.gettasktransactions(ids=ids).response
 
@@ -247,9 +259,13 @@ def getTransactions(ids=[]):
                     if isValueAddedInList(customFieldName, newValues, oldValues):
                         timestamps[id][customFieldName] = timestamp
             else:
-                for projectPHID in projectPHIDsTracked:
-                    if isTagged(txn, projectPHID):
-                        timestamps[id][f'tagged_{projectPHID}'] = timestamp
+                if isTagged(txn, 'qa_verified'):
+                        timestamps[id][f'qa_verified'] = timestamp
+                for projectSlug in projectSlugs:
+                    if isTagged(txn, projectSlug):
+                        # slug = ProjectPHIDMap[projectPHID]
+                        timestamps[id][f'tagged_{projectSlug}'] = timestamp
+
     return timestamps
 
 
@@ -264,7 +280,13 @@ def isClosedTxn(txn):
         isStatusOpen(txn['oldValue']) == True
 
 
-def isTagged(txn, projectPHID):
+# def isTagged(txn, projectPHID):
+#     return txn['transactionType'] == 'core:edge' and \
+#         not projectPHID in txn['oldValue'] and \
+#         projectPHID in txn['newValue']
+
+def isTagged(txn, slug):
+    projectPHID = ProjectPHIDMap[slug]
     return txn['transactionType'] == 'core:edge' and \
         not projectPHID in txn['oldValue'] and \
         projectPHID in txn['newValue']
@@ -289,7 +311,7 @@ def dump(dict, useJson=True):
         click.echo(dict)
 
 
-def getProjects(slug):
+def getProjects(phab, slug):
     # https://phabricator.tools.flnltd.com/conduit/method/project.search/
     constraints = {
         "slugs": [slug],
@@ -345,15 +367,58 @@ def getDateRange(cycle, year):
     return (dateOpen, dateClose)
 
 
+def getSlugs(string):
+    trimmed = [s.strip() for s in string.split(',')]
+    return [s for s in trimmed if s in ProjectPHIDMap.keys()]
+
+
+def loadConfig(isDev):
+
+    global ProjectPHIDMap
+    global QAVerifiedProjectPHID
+    global FetchBatchSize
+    global CsvOutputPath
+
+    click.echo('Loading config...')
+
+    if isDev:
+        click.echo('Development mode on')
+
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
+    # a if a is not None else b
+    phidsConfigKey = 'PHIDs_Dev' if isDev else 'PHIDs'
+    phabricatorConfigKey = 'Phabricator_Dev' if isDev else 'Phabricator'
+
+    projectMap = {}
+    for key in config[phidsConfigKey]:
+        projectMap[key] = config[phidsConfigKey][key]
+
+    ProjectPHIDMap = projectMap
+    QAVerifiedProjectPHID = config[phabricatorConfigKey]['qa_verified_project_phid']
+    ProjectPHIDMap['qa_verified'] = QAVerifiedProjectPHID
+
+    FetchBatchSize = config['Params']['fetch_batch_size']
+    CsvOutputPath = config['Params']['csv_output_path']
+
+    phabAPIToken = config[phabricatorConfigKey]['api_token']
+    phabHost = config[phabricatorConfigKey]['host']
+
+    click.echo('Configuration loaded.')
+    return Phabricator(host=phabHost, token=phabAPIToken)
+
 @click.command()
-@click.option('--cycle', '-c', prompt='Cycle', type=click.Choice(allowedCycles, case_sensitive=False))
-@click.option('--year', '-y', prompt='Year', type=click.IntRange(minimumYear, maximumYear))
-def cli(cycle, year):
-    # getProjects('capacitor_app')
-    dateRange = getDateRange(cycle, year)
-
-    getTickets(dateRange[0], dateRange[1])
-
+@click.option('--cycle', '-c', prompt='Cycle', type=click.Choice(AllowedCycles, case_sensitive=False), \
+    help='Period in which the tickets were created')
+@click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear), \
+    help='The year in which the tickets were created')
+@click.option('--projects', '-p', prompt='Project tags (comma-separated)', \
+    help='Comma-separated list of project tags (e.g. "messaging,client_success")')
+@click.option('--dev', is_flag=True)
+def cli(cycle, year, projects, dev):
+    phab = loadConfig(dev)
+    getTickets(phab, cycle, year, projects)
 
 if __name__ == '__main__':
     cli()
