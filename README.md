@@ -9,7 +9,16 @@ Gather stats about bugs for further analysis
 
 ### Setup
 
+You will need to do this once, during setup.
+
+- Edit the script `phabAPIToken` and use your own Conduit token, which you can find in settings
 - `virtualenv venv`
-- `source venv/bin/activate`
+- `. venv/bin/activate`
 - `pip3 install --editable`
-- `bug-lifecycle`
+
+Afterwards it is sufficient to just go to the directory of the script and do the following:
+
+- `. venv/bin/activate`
+- `lifecycle`
+
+Please also check the options available from `lifecycle --help`.
