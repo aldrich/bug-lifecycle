@@ -78,25 +78,27 @@ def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
             # attachments=attachments,
             limit=FetchBatchSize, after=after)
         after = result['cursor']['after']
-        # dump(result.response)
 
         for ticket in result['data']:
             strTicket = str(ticket['id'])
+            dateCreated = ticket['fields']['dateCreated']
+            dateClosed = ticket['fields']['dateClosed'] or 0
+            daysToClose = -1 if dateClosed == 0 else int(
+                (dateClosed - dateCreated) / 86400)
+
             tickets[strTicket] = {
                 'id': ticket['id'],
                 'phid': ticket['phid'],
                 'title': ticket['fields']['name'],
                 'status': ticket['fields']['status']['name'],
                 'priority': ticket['fields']['priority']['value'],
-                'dateCreated': ticket['fields']['dateCreated'],
-                'dateClosed': ticket['fields']['dateClosed'] or 0,
+                'dateCreated': dateCreated,
+                'dateClosed': dateClosed,
+                'days_open_to_close': daysToClose,  # from open
             }
 
         if after == None:
             break
-
-    # get timestamps from transactions
-    # break it down
 
     idNumbers = [int(id) for id in list(tickets.keys())]
     itemName = 'bugs' if onlyBugs else 'tickets'
@@ -106,7 +108,6 @@ def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
     fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
 
     for idChunk in chunkedIdNumbers:
-
         click.echo('.' * page)
         page = page + 1
         timestamps = getTransactions(phab, projectSlugs, idChunk)
@@ -115,6 +116,15 @@ def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
         else:
             click.echo('No data found! Try a different query.')
 
+    for key, tick in tickets.items():
+        dateClosed = tick['dateClosed'] or 0
+        if 'qa_verified' in tick.keys():
+            dateQAVerified = tick['qa_verified']
+            tick['qa_verified_to_close'] = - \
+                1 if dateClosed == 0 else int(
+                    (dateClosed - dateQAVerified) / 86400)
+        else:
+            tick['qa_verified_to_close'] = -1
     csvs = generateCSVs(tickets, fields)
     writeCSVsToFile(csvs, fields)
 
@@ -175,6 +185,8 @@ def ticketFieldsBase():
         'created',
         'closed',
         'qa_verified',
+        'days_open_to_close',
+        'qa_verified_to_close'
     ]
 
 
@@ -281,30 +293,6 @@ def isStatusOpen(status):
     return status == "open"
 
 
-def dump(dict, useJson=True):
-    if useJson:
-        click.echo(json.dumps(dict))
-    else:
-        click.echo(dict)
-
-
-def getProjects(phab, slug):
-    # https://phabricator.tools.flnltd.com/conduit/method/project.search/
-    constraints = {
-        "slugs": [slug],
-        "isRoot": True
-    }
-    result = phab.project.search(constraints=constraints)
-
-    click.echo('Project found:')
-
-    for project in result['data']:
-        name = project['fields']['name']
-        id = project['id']
-        phid = project['phid']
-        click.echo('» Project: %s (id=%s, phid=%s)' % (name, id, phid))
-
-
 def listFromTransactionValue(value):
     if isinstance(value, list):
         return value
@@ -317,7 +305,8 @@ def listFromTransactionValue(value):
 
 
 def getDateRange(cycle, year):
-    # now determine the correct start and end time epoch units based on this.
+    # now determine the correct start and end time epoch units based on cycle
+    # and year.
     startMonth = cycle * 2 - 1
     dateOpen = int(time.mktime((year, startMonth, 1, 0, 0, 0, 0, 0, 0)))
     dateClose = int(time.mktime(
@@ -374,21 +363,21 @@ def loadConfig(isDev):
     return Phabricator(host=phabHost, token=phabAPIToken)
 
 
-@click.command()
-@click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear),
-              help='The year in which the tickets were created')
-@click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6),
-              help='The cycle (1-6) in which the tickets were created')
-@click.option('--projects', '-p', prompt='Project tags (comma-separated)',
-              help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
+@ click.command()
+@ click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear),
+               help='The year in which the tickets were created')
+@ click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6),
+               help='The cycle (1-6) in which the tickets were created')
+@ click.option('--projects', '-p', prompt='Project tags (comma-separated)',
+               help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
 Note: All VALID tags found will be used in the ticket search ().')
-@click.option('--track-all-projects', is_flag=True,
-              help='If enabled, will record timestamps in which a ticket is tagged with a \
+@ click.option('--track-all-projects', is_flag=True,
+               help='If enabled, will record timestamps in which a ticket is tagged with a \
 project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
 not named in --projects). Note that `qa_verified` is always tracked.')
-@click.option('--only-bugs', is_flag=True, help='If set, only return tickets with the Bug \
+@ click.option('--only-bugs', is_flag=True, help='If set, only return tickets with the Bug \
 subtype. This option is automatically set when no recognized projects were specified.')
-@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify \
+@ click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify \
     params on config.ini)')
 def cli(cycle, year, projects, track_all_projects, only_bugs, dev):
     """This is a commandline tool to load Maniphest tickets created
