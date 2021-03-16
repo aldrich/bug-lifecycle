@@ -22,7 +22,7 @@ MaximumYear = 2021
 CsvOutputPath = ''
 
 
-def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
+def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
 
     dateRange = getDateRange(cycle, year)
     dateStart = dateRange[0]
@@ -33,19 +33,20 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
 
     constraints = {}
 
-    # if not projectSlugs:
-    #     click.echo(
-    #         f'Please specify at least one project from the list: {list(ProjectPHIDMap.keys())}')
-    #     return
-
+    shouldConstraintSubtypes = onlyBugs
     if not projectSlugs:
+        validTags = ', '.join(list(ProjectPHIDMap.keys()))
         click.echo(
-            'No project filters given. Restricting ticket search to bug subtypes.')
-        constraints['subtypes'] = ['bugcategorization', 'bugcat']
+            f'No valid project tags were recognized. Please include at least one of the following: {validTags}')
+        shouldConstraintSubtypes = True
     else:
-        # projects is an ALL-search. Only results which match all projectPHIDs are returned
+        # projects is an ALL-sesarch. Only results which match all projectPHIDs are returned
         constraints['projects'] = projectPHIDs
         # we can decide later if subtypes can optionally be applied to this case as well
+
+    if shouldConstraintSubtypes:
+        click.echo('Restricting ticket search to "Bug" subtypes.')
+        constraints['subtypes'] = ['bugcategorization', 'bugcat']
 
     # note: dateStart and dateEnd referring to tickets CREATED within this period
     if dateStart:
@@ -98,7 +99,8 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
     # break it down
 
     idNumbers = [int(id) for id in list(tickets.keys())]
-    click.echo(f'{len(idNumbers)} tickets found')
+    itemName = 'bugs' if onlyBugs else 'tickets'
+    click.echo(f'{len(idNumbers)} {itemName} found')
 
     chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
     fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
@@ -356,7 +358,7 @@ def loadConfig(isDev):
     QAVerifiedProjectPHID = config[phabricatorConfigKey]['qa_verified_project_phid']
     ProjectPHIDMap['qa_verified'] = QAVerifiedProjectPHID
 
-    FetchBatchSize = config['Params']['fetch_batch_size']
+    FetchBatchSize = int(config['Params']['fetch_batch_size'])
     CsvOutputPath = config['Params']['csv_output_path']
 
     phabAPIToken = config[phabricatorConfigKey]['api_token']
@@ -379,21 +381,23 @@ def loadConfig(isDev):
               help='The cycle (1-6) in which the tickets were created')
 @click.option('--projects', '-p', prompt='Project tags (comma-separated)',
               help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
-Note: all VALID tags found will be used in a ALL-search')
+Note: All VALID tags found will be used in the ticket search ().')
 @click.option('--track-all-projects', is_flag=True,
               help='If enabled, will record timestamps in which a ticket is tagged with a \
 project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
 not named in --projects). Note that `qa_verified` is always tracked.')
+@click.option('--only-bugs', is_flag=True, help='If set, only return tickets with the Bug \
+subtype. This option is automatically set when no recognized projects were specified.')
 @click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify \
     params on config.ini)')
-def cli(cycle, year, projects, track_all_projects, dev):
+def cli(cycle, year, projects, track_all_projects, only_bugs, dev):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
 project / tag had been first assigned to the ticket.
     """
     phab = loadConfig(dev)
-    getTickets(phab, cycle, year, projects, track_all_projects)
+    getTickets(phab, cycle, year, projects, only_bugs, track_all_projects)
 
 
 if __name__ == '__main__':
