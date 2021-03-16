@@ -267,11 +267,10 @@ def isCreateTxn(txn):
     return txn['transactionType'] == 'core:create'
 
 
-# time ticket changed from non-closed to closed
+# time ticket is set to some closed state
 def isClosedTxn(txn):
     return txn['transactionType'] == 'status' and \
-        isStatusOpen(txn['newValue']) == False and \
-        isStatusOpen(txn['oldValue']) == True
+        isStatusClosed(txn['newValue'])
 
 
 def isTagged(txn, slug):
@@ -290,7 +289,11 @@ def isValueAddedInList(value, newList, oldList):
 
 
 def isStatusOpen(status):
-    return status == "open"
+    return status.lower() == "open"
+
+
+def isStatusClosed(status):
+    return status.lower() in ['duplicate', 'invalid', 'resolved', 'wontfix']
 
 
 def listFromTransactionValue(value):
