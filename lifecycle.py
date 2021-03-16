@@ -3,6 +3,7 @@ import configparser
 import json
 import re
 import time
+from datetime import datetime
 from phabricator import Phabricator
 
 # Globals
@@ -16,7 +17,6 @@ CustomFieldsEnabled = []
 # Note: these are overwritten when calling `loadConfig`
 # tickets fetched per API call (NOT the total tickets to fetch)
 FetchBatchSize = 50
-AllowedCycles = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
 MinimumYear = 2020
 MaximumYear = 2021
 CsvOutputPath = ''
@@ -67,6 +67,7 @@ def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
     # Fetch ticket info through `maniphest.search`:
     # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
 
+    timestampNow = int(datetime.timestamp(datetime.now()))
     after = None
     page = 1
     click.echo(f'Pulling Maniphest tickets...')
@@ -95,6 +96,7 @@ def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
                 'dateCreated': dateCreated,
                 'dateClosed': dateClosed,
                 'days_open_to_close': daysToClose,  # from open
+                'timestamp': timestampNow,
             }
 
         if after == None:
@@ -186,7 +188,8 @@ def ticketFieldsBase():
         'closed',
         'qa_verified',
         'days_open_to_close',
-        'qa_verified_to_close'
+        'qa_verified_to_close',
+        'timestamp'
     ]
 
 
