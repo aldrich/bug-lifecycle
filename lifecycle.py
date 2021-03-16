@@ -13,12 +13,13 @@ QAVerifiedProjectPHID = ''
 CustomFieldsEnabled = []
 
 # Constants
-CsvOutputPath = ''
-TitleMaxLen = 30
-FetchBatchSize = 50  # tickets fetched per batch (NOT the total tickets to fetch)
+# Note: these are overwritten when calling `loadConfig`
+# tickets fetched per API call (NOT the total tickets to fetch)
+FetchBatchSize = 50
 AllowedCycles = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
 MinimumYear = 2020
 MaximumYear = 2021
+CsvOutputPath = ''
 
 
 def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
@@ -38,7 +39,8 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
     #     return
 
     if not projectSlugs:
-        click.echo('No project filters given. Restricting ticket search to bug subtypes.')
+        click.echo(
+            'No project filters given. Restricting ticket search to bug subtypes.')
         constraints['subtypes'] = ['bugcategorization', 'bugcat']
     else:
         # projects is an ALL-search. Only results which match all projectPHIDs are returned
@@ -98,7 +100,7 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
     idNumbers = [int(id) for id in list(tickets.keys())]
     click.echo(f'{len(idNumbers)} tickets found')
 
-    chunkedIdNumbers = list(chunks(idNumbers, 25))
+    chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
     fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
 
     for idChunk in chunkedIdNumbers:
@@ -111,14 +113,15 @@ def getTickets(phab, cycle, year, projectsStr, trackAllProjects):
         else:
             click.echo('No data found! Try a different query.')
 
-
     csvs = generateCSVs(tickets, fields)
     writeCSVsToFile(csvs, fields)
+
 
 def chunks(lst, n):
     """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
+
 
 def fieldValuesTuple(ticket, fields):
     fieldValues = []
@@ -172,11 +175,14 @@ def ticketFieldsBase():
         'qa_verified',
     ]
 
+
 def ticketFields(projects):
     return [f'tagged_{value}' for value in projects]
 
+
 def ticketFieldsCustom():
     return CustomFieldsEnabled
+
 
 def writeCSVsToFile(csvs, fields):
     header = ','.join(fields)
@@ -235,7 +241,7 @@ def getTransactions(phab, projectSlugs, ids=[]):
                         timestamps[id][customFieldName] = timestamp
             else:
                 if isTagged(txn, 'qa_verified'):
-                        timestamps[id][f'qa_verified'] = timestamp
+                    timestamps[id][f'qa_verified'] = timestamp
                 for projectSlug in projectSlugs:
                     if isTagged(txn, projectSlug):
                         timestamps[id][f'tagged_{projectSlug}'] = timestamp
@@ -252,6 +258,7 @@ def isClosedTxn(txn):
     return txn['transactionType'] == 'status' and \
         isStatusOpen(txn['newValue']) == False and \
         isStatusOpen(txn['oldValue']) == True
+
 
 def isTagged(txn, slug):
     projectPHID = ProjectPHIDMap[slug]
@@ -361,22 +368,33 @@ def loadConfig(isDev):
         if customFieldsSection[key] == '1':
             CustomFieldsEnabled.append(key)
 
-
     click.echo('Configuration loaded.')
     return Phabricator(host=phabHost, token=phabAPIToken)
 
+
 @click.command()
-@click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear), \
-    help='The year in which the tickets were created')
-@click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6), \
-    help='Period (1...6) in which the tickets were created')
-@click.option('--projects', '-p', prompt='Project tags (comma-separated)', \
-    help='Comma-separated list of project tags (e.g. "messaging,client_success")')
-@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify params on config.ini)')
-@click.option('--track-all-projects', is_flag=True, help='If enabled, will track tagged timestamps for each project named in PHIDs in config.ini')
-def cli(cycle, year, projects, dev, track_all_projects):
+@click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear),
+              help='The year in which the tickets were created')
+@click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6),
+              help='The cycle (1-6) in which the tickets were created')
+@click.option('--projects', '-p', prompt='Project tags (comma-separated)',
+              help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
+Note: all VALID tags found will be used in a ALL-search')
+@click.option('--track-all-projects', is_flag=True,
+              help='If enabled, will record timestamps in which a ticket is tagged with a \
+project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
+not named in --projects). Note that `qa_verified` is always tracked.')
+@click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify \
+    params on config.ini)')
+def cli(cycle, year, projects, track_all_projects, dev):
+    """This is a commandline tool to load Maniphest tickets created
+within a time period (year and cycle), and collects timestamps for
+each, including for open and closed date, and the dates when a given
+project / tag had been first assigned to the ticket.
+    """
     phab = loadConfig(dev)
     getTickets(phab, cycle, year, projects, track_all_projects)
+
 
 if __name__ == '__main__':
     cli()
