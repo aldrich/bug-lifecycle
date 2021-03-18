@@ -13,6 +13,7 @@ cycleMatcher = re.compile(r'^(\d{4})c([1-6]$)', re.IGNORECASE)
 ProjectPHIDMap = {}
 QAVerifiedProjectPHID = ''
 CustomFieldsEnabled = []
+QuietMode = False
 
 # Constants
 # Note: these are overwritten when calling `loadConfig`
@@ -20,7 +21,6 @@ CustomFieldsEnabled = []
 FetchBatchSize = 50
 MinimumYear = 2020
 MaximumYear = 2021
-CsvOutputPath = ''
 
 
 def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects):
@@ -33,7 +33,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     shouldConstraintSubtypes = onlyBugs
     if not projectSlugs:
         validTags = ', '.join(list(ProjectPHIDMap.keys()))
-        click.echo(
+        log(
             f'No valid project tags were recognized. Please include at least one of the following: {validTags}')
         shouldConstraintSubtypes = True
     else:
@@ -42,7 +42,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
         # we can decide later if subtypes can optionally be applied to this case as well
 
     if shouldConstraintSubtypes:
-        click.echo('Restricting ticket search to "Bug" subtypes.')
+        log('Restricting ticket search to "Bug" subtypes.')
         constraints['subtypes'] = ['bugcategorization', 'bugcat']
 
     # note: dateStart and dateEnd referring to tickets CREATED within this period
@@ -51,14 +51,14 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     if dateEnd:
         constraints['createdEnd'] = dateEnd
 
-    click.echo(f'Valid project slugs in query: {projectSlugs}.')
-    click.echo(f'Constraints to maniphest.search: {json.dumps(constraints)}')
+    log(f'Valid project slugs in query: {projectSlugs}.')
+    log(f'Constraints to maniphest.search: {json.dumps(constraints)}')
 
     tickets = {}
 
     # add all the other slugs not named (if desired)
     if trackAllProjects:
-        click.echo('Tracking timestamps for all listed projects')
+        log('Tracking timestamps for all listed projects')
         projectSlugs = list(ProjectPHIDMap.keys())
 
     # Fetch ticket info through `maniphest.search`:
@@ -67,9 +67,8 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     timestampNow = int(datetime.timestamp(datetime.now()))
     after = None
     page = 1
-    click.echo(f'Pulling Maniphest tickets...')
+    log(f'Pulling Maniphest tickets')
     while True:
-        click.echo('.' * page)
         page = page + 1
         result = phab.maniphest.search(
             constraints=constraints,
@@ -101,19 +100,18 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
 
     idNumbers = [int(id) for id in list(tickets.keys())]
     itemName = 'bugs' if onlyBugs else 'tickets'
-    click.echo(f'{len(idNumbers)} {itemName} found')
+    log(f'{len(idNumbers)} {itemName} found in total')
 
     chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
     fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
 
     for idChunk in chunkedIdNumbers:
-        click.echo('.' * page)
         page = page + 1
         timestamps = getTransactions(phab, projectSlugs, idChunk)
         if len(timestamps) > 0:
             mergeTicketDicts(tickets, timestamps)
         else:
-            click.echo('No data found! Try a different query.')
+            log('No data found! Try a different query.')
 
     for key, tick in tickets.items():
         dateClosed = tick['dateClosed'] or 0
@@ -125,7 +123,6 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
         else:
             tick['qa_verified_to_close'] = -1
     csvs = generateCSVs(tickets, fields)
-    writeCSVsToFile(csvs, fields)
 
 
 def chunks(lst, n):
@@ -161,16 +158,14 @@ def generateCSVs(tickets, fields):
     formatStr = ','.join(formatElements)
 
     # print the header on to the console
-    click.echo('---')
-    click.echo(','.join(fields))
+    log(','.join(fields))
 
     for _, ticket in tickets.items():
         line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
-        click.echo(line)
+        log(line, ignoreQuiet=True)
         line += '\n'
         csvs.append(line)
 
-    click.echo('---')
     return csvs
 
 
@@ -198,15 +193,6 @@ def ticketFieldsCustom():
     return CustomFieldsEnabled
 
 
-def writeCSVsToFile(csvs, fields):
-    header = ','.join(fields)
-    with open(CsvOutputPath, 'w') as csvFile:
-        click.echo("Dumping CSV data...")
-        csvFile.write(f'{header}\n')
-        csvFile.writelines(csvs)
-        click.echo(f'Ticket data written out to {CsvOutputPath}.')
-
-
 def mergeTicketDicts(intoDict, fromDict):
     for key, _ in fromDict.items():
         intoDict[key].update(fromDict[key])
@@ -217,13 +203,13 @@ def getTransactions(phab, projectSlugs, ids=[]):
     # ids should be of list<int> type
     count = len(ids)
     if count < 1:
-        click.echo('No tickets found.')
+        log('No tickets found')
         return []
 
     # Note: maniphest.gettasktransactions is a deprecated method in
     # Conduit. But we lack other options to get a list of transactions for
     # multiple tickets in a single call.
-    click.echo(f'Pulling transaction data from {count} tickets...')
+    log(f'Pulling transaction data from {count} tickets')
     transactionsDict = phab.maniphest.gettasktransactions(ids=ids).response
 
     ids = list(transactionsDict.keys())
@@ -322,18 +308,22 @@ def getSlugs(string):
     return [s for s in trimmed if s in ProjectPHIDMap.keys()]
 
 
+def log(obj, ignoreQuiet=False):
+    if QuietMode == False or ignoreQuiet == True:
+        click.echo(obj)
+
+
 def loadConfig(isDev):
 
     global ProjectPHIDMap
     global QAVerifiedProjectPHID
     global FetchBatchSize
-    global CsvOutputPath
     global CustomFieldsEnabled
 
-    click.echo('Loading config...')
+    log('Loading config')
 
     if isDev:
-        click.echo('Development mode on')
+        log('Development mode on')
 
     config = configparser.ConfigParser()
     config.read('config.ini')
@@ -351,7 +341,6 @@ def loadConfig(isDev):
     ProjectPHIDMap['qa_verified'] = QAVerifiedProjectPHID
 
     FetchBatchSize = int(config['Params']['fetch_batch_size'])
-    CsvOutputPath = config['Params']['csv_output_path']
 
     phabAPIToken = config[phabricatorConfigKey]['api_token']
     phabHost = config[phabricatorConfigKey]['host']
@@ -362,7 +351,6 @@ def loadConfig(isDev):
         if customFieldsSection[key] == '1':
             CustomFieldsEnabled.append(key)
 
-    click.echo('Configuration loaded.')
     return Phabricator(host=phabHost, token=phabAPIToken)
 
 
@@ -394,27 +382,31 @@ subtype. This option is automatically set when no recognized projects were speci
               is_flag=True,
               help='Run on a local Phabricator instance (specify \
     params on config.ini)')
-def cli(created_in_cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev):
+@click.option('--quiet', '-q',
+              is_flag=True,
+              help='Suppress stdout generation unrelated to the final output')
+def cli(created_in_cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev, quiet):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
 project / tag had been first assigned to the ticket.
     """
+    global QuietMode
+    QuietMode = quiet
+
     phab = loadConfig(dev)
 
     # check params
     if created_in_cycle != None and (start_date != None or end_date != None):
-        click.echo(
+        log(
             'Please include only one of --created-in-cycle, or --start-date/--end-date ')
         return
 
     if created_in_cycle != None:
 
         dateRange = getDateRangeFromCycleStr(created_in_cycle)
-        if dateRange != None:
-            click.echo(dateRange)
-        else:
-            click.echo('no date range found!')
+        if dateRange == None:
+            log('no date range found!')
             return
 
         (dateStart, dateEnd) = dateRange
@@ -422,10 +414,10 @@ project / tag had been first assigned to the ticket.
     else:
         # should have both start_date and end_date
         if start_date == None or end_date == None:
-            click.echo('Please specify both --start-date and --end-date')
+            log('Please specify both --start-date and --end-date')
             return
         if start_date > end_date:
-            click.echo('Make sure start date <= end date')
+            log('Make sure start date <= end date')
             return
 
         dateStart = start_date
@@ -439,20 +431,19 @@ def getDateRangeFromCycleStr(cycleStr):
     # convert year and cycle to start and end create epochs
     matches = cycleMatcher.findall(cycleStr)
     if len(matches) != 1 or len(matches[0]) != 2:
-        click.echo('invalid input to cycle. Format should be "YYYYCX"')
+        log('invalid input to cycle. Format should be "YYYYCX"')
         return None
 
     (year, cycle) = (int(matches[0][0]), int(matches[0][1]))
 
     if year < 2019 or year > 2029:
-        click.echo('Invalid year (2019-2029)')
+        log('Invalid year (2019-2029)')
         return None
 
     if cycle < 1 or cycle > 6:
-        click.echo('Invalid cycle (1-6)')
+        log('Invalid cycle (1-6)')
         return None
 
-    # click.echo(f'Year: {year} Cycle: C{cycle}')
     return(getDateRange(cycle, year))
 
 
