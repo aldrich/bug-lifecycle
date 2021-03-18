@@ -8,6 +8,7 @@ from phabricator import Phabricator
 
 # Globals
 phidMatcher = re.compile(r'PHID-BUGC-([a-zA-Z-_]+)')
+cycleMatcher = re.compile(r'^(\d{4})c([1-6]$)', re.IGNORECASE)
 
 ProjectPHIDMap = {}
 QAVerifiedProjectPHID = ''
@@ -22,11 +23,7 @@ MaximumYear = 2021
 CsvOutputPath = ''
 
 
-def getTickets(phab, cycle, year, projectsStr, onlyBugs, trackAllProjects):
-
-    dateRange = getDateRange(cycle, year)
-    dateStart = dateRange[0]
-    dateEnd = dateRange[1]
+def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects):
 
     projectSlugs = getSlugs(projectsStr) if projectsStr else ''
     projectPHIDs = [ProjectPHIDMap[slug] for slug in projectSlugs]
@@ -369,30 +366,94 @@ def loadConfig(isDev):
     return Phabricator(host=phabHost, token=phabAPIToken)
 
 
-@ click.command()
-@ click.option('--year', '-y', prompt='Year', type=click.IntRange(MinimumYear, MaximumYear),
-               help='The year in which the tickets were created')
-@ click.option('--cycle', '-c', prompt='Cycle', type=click.IntRange(1, 6),
-               help='The cycle (1-6) in which the tickets were created')
-@ click.option('--projects', '-p', prompt='Project tags (comma-separated)',
-               help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
-Note: All VALID tags found will be used in the ticket search ().')
-@ click.option('--track-all-projects', is_flag=True,
-               help='If enabled, will record timestamps in which a ticket is tagged with a \
+@click.command()
+@click.option('--created-in-cycle', '-cc', type=click.STRING,
+              help='The year and cycle in which the tickets were created the format is YYYYCX, \
+where YYYY is the year and X is a number between 1 and 6. For example: "2021C1". If used, neither \
+of --start-date or --end-date should be used.')
+@click.option('--start-date', type=click.INT,
+              help='Earliest timestamp for tickets in \
+query. If used, must also include --end-date, and --created-in-cycle should be omitted.')
+@click.option('--end-date', type=click.INT,
+              help='Latest timestamp for tickets in \
+query. If used, must also include --start-date, and --created-in-cycle should be omitted.')
+@click.option('--projects', '-p',
+              prompt='Project tags (comma-separated)',
+              help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
+Note: All VALID tags found will be used in the ticket search.')
+@click.option('--track-all-projects',
+              is_flag=True,
+              help='If enabled, will record timestamps in which a ticket is tagged with a \
 project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
 not named in --projects). Note that `qa_verified` is always tracked.')
-@ click.option('--only-bugs', is_flag=True, help='If set, only return tickets with the Bug \
+@click.option('--only-bugs',
+              is_flag=True,
+              help='If set, only return tickets with the Bug \
 subtype. This option is automatically set when no recognized projects were specified.')
-@ click.option('--dev', is_flag=True, help='Run on a local Phabricator instance (specify \
+@click.option('--dev',
+              is_flag=True,
+              help='Run on a local Phabricator instance (specify \
     params on config.ini)')
-def cli(cycle, year, projects, track_all_projects, only_bugs, dev):
+def cli(created_in_cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
 project / tag had been first assigned to the ticket.
     """
     phab = loadConfig(dev)
-    getTickets(phab, cycle, year, projects, only_bugs, track_all_projects)
+
+    # check params
+    if created_in_cycle != None and (start_date != None or end_date != None):
+        click.echo(
+            'Please include only one of --created-in-cycle, or --start-date/--end-date ')
+        return
+
+    if created_in_cycle != None:
+
+        dateRange = getDateRangeFromCycleStr(created_in_cycle)
+        if dateRange != None:
+            click.echo(dateRange)
+        else:
+            click.echo('no date range found!')
+            return
+
+        (dateStart, dateEnd) = dateRange
+
+    else:
+        # should have both start_date and end_date
+        if start_date == None or end_date == None:
+            click.echo('Please specify both --start-date and --end-date')
+            return
+        if start_date > end_date:
+            click.echo('Make sure start date <= end date')
+            return
+
+        dateStart = start_date
+        dateEnd = end_date
+
+    getTickets(phab, dateStart, dateEnd, projects,
+               only_bugs, track_all_projects)
+
+
+def getDateRangeFromCycleStr(cycleStr):
+    # convert year and cycle to start and end create epochs
+    matches = cycleMatcher.findall(cycleStr)
+    if len(matches) != 1 or len(matches[0]) != 2:
+        click.echo('invalid input to cycle. Format should be "YYYYCX"')
+        return None
+
+    (year, cycle) = (int(matches[0][0]), int(matches[0][1]))
+
+    if year < 2019 or year > 2029:
+        click.echo('Invalid year (2019-2029)')
+        return None
+
+    if cycle < 1 or cycle > 6:
+        click.echo('Invalid cycle (1-6)')
+        return None
+
+    # click.echo(f'Year: {year} Cycle: C{cycle}')
+    return(getDateRange(cycle, year))
 
 
 if __name__ == '__main__':
