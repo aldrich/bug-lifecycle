@@ -2,6 +2,7 @@ import click
 import configparser
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from phabricator import Phabricator
@@ -34,7 +35,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     if not projectSlugs:
         validTags = ', '.join(list(ProjectPHIDMap.keys()))
         log(
-            f'No valid project tags were recognized. Please include at least one of the following: {validTags}')
+            f'No valid project tags were recognized. Please include at least one of the following: {validTags}', isError=True)
         shouldConstraintSubtypes = True
     else:
         # projects is an ALL-sesarch. Only results which match all projectPHIDs are returned
@@ -111,7 +112,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
         if len(timestamps) > 0:
             mergeTicketDicts(tickets, timestamps)
         else:
-            log('No data found! Try a different query.')
+            log('No data found! Try a different query.', isError=True)
 
     for key, tick in tickets.items():
         dateClosed = tick['dateClosed'] or 0
@@ -122,7 +123,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
                     (dateClosed - dateQAVerified) / 86400)
         else:
             tick['qa_verified_to_close'] = -1
-    csvs = generateCSVs(tickets, fields)
+    printTicketData(tickets, fields)
 
 
 def chunks(lst, n):
@@ -144,10 +145,12 @@ def fieldValuesTuple(ticket, fields):
     return tuple(fieldValues)
 
 
-def generateCSVs(tickets, fields):
-    csvs = []
-    formatElements = []
+def printTicketData(tickets, fields):
 
+    # print the header on to the console
+    log(','.join(fields), ignoreQuiet=True)
+
+    formatElements = []
     for fieldname in fields:
         if fieldname in ['phid', 'status', 'title', 'id']:
             formatElements.append('%s')
@@ -156,17 +159,9 @@ def generateCSVs(tickets, fields):
 
     # formatStr could be smt like '%d,%s,%s,%d,%d,%d,%d,%d,%d'
     formatStr = ','.join(formatElements)
-
-    # print the header on to the console
-    log(','.join(fields))
-
     for _, ticket in tickets.items():
         line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
         log(line, ignoreQuiet=True)
-        line += '\n'
-        csvs.append(line)
-
-    return csvs
 
 
 def ticketFieldsBase():
@@ -203,7 +198,7 @@ def getTransactions(phab, projectSlugs, ids=[]):
     # ids should be of list<int> type
     count = len(ids)
     if count < 1:
-        log('No tickets found')
+        log('No tickets found', isError=True)
         return []
 
     # Note: maniphest.gettasktransactions is a deprecated method in
@@ -308,7 +303,10 @@ def getSlugs(string):
     return [s for s in trimmed if s in ProjectPHIDMap.keys()]
 
 
-def log(obj, ignoreQuiet=False):
+def log(obj, isError=False, ignoreQuiet=False):
+    if isError == True:
+        print(obj, file=sys.stderr)
+        return
     if QuietMode == False or ignoreQuiet == True:
         click.echo(obj)
 
@@ -399,14 +397,14 @@ project / tag had been first assigned to the ticket.
     # check params
     if created_in_cycle != None and (start_date != None or end_date != None):
         log(
-            'Please include only one of --created-in-cycle, or --start-date/--end-date ')
+            'Please include only one of --created-in-cycle, or --start-date/--end-date', isError=True)
         return
 
     if created_in_cycle != None:
 
         dateRange = getDateRangeFromCycleStr(created_in_cycle)
         if dateRange == None:
-            log('no date range found!')
+            log('No date range found!', isError=True)
             return
 
         (dateStart, dateEnd) = dateRange
@@ -414,10 +412,10 @@ project / tag had been first assigned to the ticket.
     else:
         # should have both start_date and end_date
         if start_date == None or end_date == None:
-            log('Please specify both --start-date and --end-date')
+            log('Please specify both --start-date and --end-date', isError=True)
             return
         if start_date > end_date:
-            log('Make sure start date <= end date')
+            log('Make sure start date <= end date', isError=True)
             return
 
         dateStart = start_date
@@ -431,17 +429,17 @@ def getDateRangeFromCycleStr(cycleStr):
     # convert year and cycle to start and end create epochs
     matches = cycleMatcher.findall(cycleStr)
     if len(matches) != 1 or len(matches[0]) != 2:
-        log('invalid input to cycle. Format should be "YYYYCX"')
+        log('Invalid input to cycle. Format should be "YYYYCX"', isError=True)
         return None
 
     (year, cycle) = (int(matches[0][0]), int(matches[0][1]))
 
     if year < 2019 or year > 2029:
-        log('Invalid year (2019-2029)')
+        log('Invalid year (2019-2029)', isError=True)
         return None
 
     if cycle < 1 or cycle > 6:
-        log('Invalid cycle (1-6)')
+        log('Invalid cycle (1-6)', isError=True)
         return None
 
     return(getDateRange(cycle, year))
