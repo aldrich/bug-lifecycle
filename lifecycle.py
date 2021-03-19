@@ -35,7 +35,8 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     if not projectSlugs:
         validTags = ', '.join(list(ProjectPHIDMap.keys()))
         log(
-            f'No valid project tags were recognized. Please include at least one of the following: {validTags}', isError=True)
+            f'No valid project tags were recognized. Please include at least one of \
+the following: {validTags}', isError=True)
         shouldConstraintSubtypes = True
     else:
         # projects is an ALL-sesarch. Only results which match all projectPHIDs are returned
@@ -62,19 +63,47 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
         log('Tracking timestamps for all listed projects')
         projectSlugs = list(ProjectPHIDMap.keys())
 
+    getTicketForProject(phab)
+
+    return
+
+    chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
+    fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
+
+    for idChunk in chunkedIdNumbers:
+        page = page + 1
+        timestamps = getTransactions(phab, projectSlugs, idChunk)
+        if len(timestamps) > 0:
+            mergeTicketDicts(tickets, timestamps)
+        else:
+            log('No data found! Try a different query.', isError=True)
+
+    for key, tick in tickets.items():
+        dateClosed = tick['dateClosed'] or 0
+        if 'qa_verified' in tick.keys():
+            dateQAVerified = tick['qa_verified']
+            tick['qa_verified_to_close'] = - \
+                1 if dateClosed == 0 else int(
+                    (dateClosed - dateQAVerified) / 86400)
+        else:
+            tick['qa_verified_to_close'] = -1
+    printTicketData(tickets, fields)
+
+
+def getTicketForProject(phab):
     # Fetch ticket info through `maniphest.search`:
     # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
-
+    #
     timestampNow = int(datetime.timestamp(datetime.now()))
+
     after = None
     page = 1
     log(f'Pulling Maniphest tickets')
     while True:
         page = page + 1
-        result = phab.maniphest.search(
-            constraints=constraints,
-            # attachments=attachments,
-            limit=FetchBatchSize, after=after)
+        result = phab.maniphest.search(constraints=constraints,
+                                       limit=FetchBatchSize,
+                                       after=after)
         after = result['cursor']['after']
 
         for ticket in result['data']:
@@ -102,28 +131,7 @@ def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects
     idNumbers = [int(id) for id in list(tickets.keys())]
     itemName = 'bugs' if onlyBugs else 'tickets'
     log(f'{len(idNumbers)} {itemName} found in total')
-
-    chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
-    fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
-
-    for idChunk in chunkedIdNumbers:
-        page = page + 1
-        timestamps = getTransactions(phab, projectSlugs, idChunk)
-        if len(timestamps) > 0:
-            mergeTicketDicts(tickets, timestamps)
-        else:
-            log('No data found! Try a different query.', isError=True)
-
-    for key, tick in tickets.items():
-        dateClosed = tick['dateClosed'] or 0
-        if 'qa_verified' in tick.keys():
-            dateQAVerified = tick['qa_verified']
-            tick['qa_verified_to_close'] = - \
-                1 if dateClosed == 0 else int(
-                    (dateClosed - dateQAVerified) / 86400)
-        else:
-            tick['qa_verified_to_close'] = -1
-    printTicketData(tickets, fields)
+    pass
 
 
 def chunks(lst, n):
@@ -311,12 +319,15 @@ def log(obj, isError=False, ignoreQuiet=False):
         click.echo(obj)
 
 
-def loadConfig(isDev):
+def loadConfig(isDev, isQuiet):
 
     global ProjectPHIDMap
     global QAVerifiedProjectPHID
     global FetchBatchSize
     global CustomFieldsEnabled
+    global QuietMode
+
+    QuietMode = isQuiet
 
     log('Loading config')
 
@@ -331,10 +342,10 @@ def loadConfig(isDev):
     phabricatorConfigKey = 'Phabricator_Dev' if isDev else 'Phabricator'
 
     projectMap = {}
-    for key in config[phidsConfigKey]:
-        projectMap[key] = config[phidsConfigKey][key]
+    # for key in config[phidsConfigKey]:
+    #     projectMap[key] = config[phidsConfigKey][key]
 
-    ProjectPHIDMap = projectMap
+    # ProjectPHIDMap = projectMap
     QAVerifiedProjectPHID = config[phabricatorConfigKey]['qa_verified_project_phid']
     ProjectPHIDMap['qa_verified'] = QAVerifiedProjectPHID
 
@@ -389,40 +400,61 @@ within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
 project / tag had been first assigned to the ticket.
     """
-    global QuietMode
-    QuietMode = quiet
 
-    phab = loadConfig(dev)
+    phab = loadConfig(dev, quiet)
 
-    # check params
-    if created_in_cycle != None and (start_date != None or end_date != None):
-        log(
-            'Please include only one of --created-in-cycle, or --start-date/--end-date', isError=True)
+    slugMap = fetchPHIDMapFromProjectsString(phab, projects)
+    ProjectPHIDMap.update(slugMap)
+    log(ProjectPHIDMap)
+
+    dateRange = checkDateParams(created_in_cycle, start_date, end_date)
+    if dateRange == None:
         return
-
-    if created_in_cycle != None:
-
-        dateRange = getDateRangeFromCycleStr(created_in_cycle)
-        if dateRange == None:
-            log('No date range found!', isError=True)
-            return
-
-        (dateStart, dateEnd) = dateRange
-
-    else:
-        # should have both start_date and end_date
-        if start_date == None or end_date == None:
-            log('Please specify both --start-date and --end-date', isError=True)
-            return
-        if start_date > end_date:
-            log('Make sure start date <= end date', isError=True)
-            return
-
-        dateStart = start_date
-        dateEnd = end_date
+    (dateStart, dateEnd) = dateRange
 
     getTickets(phab, dateStart, dateEnd, projects,
                only_bugs, track_all_projects)
+
+
+def fetchPHIDMapFromProjectsString(phab, projects):
+    '''use a phab search for slugs and get all valid PHIDs into map.'''
+    slugs = [s.strip() for s in projects.split(',')]
+    projectSlugs = slugs if projects else ''
+    constraints = {'slugs': projectSlugs}
+    slugsDict = phab.project.search(
+        constraints=constraints).response['maps']['slugMap']
+    slugMap = {}
+    for slug in slugsDict:
+        slugMap[slug] = slugsDict[slug]['projectPHID']
+    return slugMap
+
+
+def checkDateParams(createdInCycle, startDate, endDate):
+    # check params
+    if createdInCycle != None and (startDate != None or endDate != None):
+        log(
+            'Please include only one of --created-in-cycle, or --start-date/--end-date', isError=True)
+        return None
+
+    if createdInCycle != None:
+
+        dateRange = getDateRangeFromCycleStr(createdInCycle)
+        if dateRange == None:
+            log('No date range found!', isError=True)
+            return None
+
+        return dateRange
+
+    else:
+        # should have both start_date and end_date
+        if startDate == None or endDate == None:
+            log('Please specify both --start-date and --end-date', isError=True)
+            return None
+        if startDate > endDate:
+            log('Make sure start date <= end date', isError=True)
+            return None
+
+        return (startDate, endDate)
 
 
 def getDateRangeFromCycleStr(cycleStr):
