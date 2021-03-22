@@ -295,6 +295,7 @@ def getDateRange(cycle, year):
     dateOpen = int(time.mktime((year, startMonth, 1, 0, 0, 0, 0, 0, 0)))
     dateClose = int(time.mktime(
         (year, startMonth + 2, 1, 0, 0, 0, 0, 0, 0)) - 1)
+    log(f'Date range: {dateOpen}...{dateClose}')
     return (dateOpen, dateClose)
 
 
@@ -361,6 +362,18 @@ def loadConfig(isDev, isQuiet):
 
     return Phabricator(host=phabHost, token=phabAPIToken)
 
+"""
+TODO:
+- clean up
+- remove dev
+- add comments per function
+- improve documentation
+- add a JSON output option
+- make a method that generates the main output
+- (sort by category?)
+- (filter by status)
+"""
+
 
 @click.command()
 @click.option('--cycle', '-c', type=click.STRING,
@@ -377,11 +390,6 @@ query. If used, must also include --start-date, and --created-in-cycle should be
               prompt='Project tags (comma-separated)',
               help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
 Note: All VALID tags found will be used in the ticket search.')
-@click.option('--track-all-projects',
-              is_flag=True,
-              help='If enabled, will record timestamps in which a ticket is tagged with a \
-project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
-not named in --projects). Note that `qa_verified` is always tracked.')
 @click.option('--only-bugs', '-b',
               is_flag=True,
               help='If set, only return tickets with the Bug \
@@ -393,7 +401,7 @@ subtype. This option is automatically set when no recognized projects were speci
 @click.option('--quiet', '-q',
               is_flag=True,
               help='Suppress stdout generation unrelated to the final output')
-def cli(cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev, quiet):
+def cli(cycle, start_date, end_date, projects, only_bugs, dev, quiet):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
@@ -446,8 +454,17 @@ def checkDateParams(createdInCycle, startDate, endDate):
     else:
         # should have both start_date and end_date
         if startDate == None or endDate == None:
-            log('Please specify both --start-date and --end-date', isError=True)
-            return None
+
+            # prompt for cycle / year
+            s = click.prompt('Year and Cycle (e.g. 2020C1)', type=click.STRING)
+            dateRange = getDateRangeFromCycleStr(s)
+
+            if dateRange == None:
+                log('No date range found!', isError=True)
+                return None
+
+            return dateRange
+
         if startDate > endDate:
             log('Make sure start date <= end date', isError=True)
             return None
