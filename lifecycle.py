@@ -5,7 +5,12 @@ import re
 import sys
 import time
 from datetime import datetime
+from enum import Enum
 from phabricator import Phabricator
+
+class OutputFormat(Enum):
+    JSON = 1
+    CSV = 2
 
 # Globals
 phidMatcher = re.compile(r'PHID-BUGC-([a-zA-Z-_]+)')
@@ -36,15 +41,21 @@ For best results, avoid inputting a long list of projects.')
 @click.option('--only-bugs', '-b',
               is_flag=True,
               help='If set, only return tickets with the "Bug Categorization" subtype.')
+@click.option('--format', '-f',
+              type = click.Choice(['CSV', 'JSON'], case_sensitive=False),
+              prompt='Output format',
+              default='CSV',
+              help='Output format')
 @click.option('--quiet', '-q',
               is_flag=True,
               help='Suppress stdout generation unrelated to the final output')
-def cli(cycle, start_date, end_date, projects, only_bugs, quiet):
+def cli(cycle, start_date, end_date, projects, only_bugs, format, quiet):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (e.g. year and cycle), and outputs timestamps for
 each, including for open and closed date, as well as the dates when a
 given project / tag is first assigned to the ticket.
     """
+
     phab = loadConfig(quiet)
 
     projects = projects.lower()
@@ -62,7 +73,14 @@ given project / tag is first assigned to the ticket.
     tickets = getTicketData(phab, dateStart, dateEnd, validProjectSlugs, only_bugs)
 
     fields = ticketFieldsBase() + ticketFields(validProjectSlugs) + ticketFieldsCustom()
-    printTicketDataCSV(tickets, fields)
+
+    outputFormat = OutputFormat.CSV
+    if format == 'JSON':
+        outputFormat = OutputFormat.JSON
+
+    strOutput = getTicketDataAsString(tickets, fields, outputFormat)
+
+    log(strOutput, ignoreQuiet=True)
 
 def getTicketData(phab, dateStart, dateEnd, validProjectSlugs, onlyBugs):
     """
@@ -186,29 +204,38 @@ def fieldValuesTuple(ticket, fields):
     return tuple(fieldValues)
 
 
-def printTicketDataCSV(tickets, fields):
+def getTicketDataAsString(tickets, fields, outFormat=OutputFormat.CSV):
     """
-    Output the tickets (dictionary) in CSV format. Fields
-    supplied are used as basis of determining extra columns
-    generated.
+    Output the tickets as a single string, as either CSV or JSON
+    format. `fields` are used as basis of determining extra
+    columns generated in the CSV output.
     """
-    # print the header on to the console
-    log(','.join(fields), ignoreQuiet=True)
 
-    formatElements = []
-    for fieldname in fields:
-        if fieldname in ['phid', 'status', 'title', 'id']:
-            formatElements.append('%s')
-        else:
-            formatElements.append('%d')
+    if outFormat == OutputFormat.JSON:
+        return json.dumps(tickets)
 
-    # formatStr could be smt like '%d,%s,%s,%d,%d,%d,%d,%d,%d'
-    formatStr = ','.join(formatElements)
+    elif outFormat == OutputFormat.CSV:
 
-    for _, ticket in tickets.items():
-        line = f'{formatStr}' % fieldValuesTuple(ticket, fields)
-        log(line, ignoreQuiet=True)
+        # Start with CSV header
+        lines = [','.join(fields)]
 
+        formatElements = []
+        for fieldname in fields:
+            if fieldname in ['phid', 'status', 'title', 'id']:
+                formatElements.append('%s')
+            else:
+                formatElements.append('%d')
+
+        # formatStr could be smt like '%d,%s,%s,%d,%d,%d,%d,%d,%d'
+        formatStr = ','.join(formatElements)
+
+        for _, ticket in tickets.items():
+            lines.append(f'{formatStr}' % fieldValuesTuple(ticket, fields))
+
+        return '\n'.join(lines)
+
+    else:
+        return
 
 def ticketFieldsBase():
     # all fields have type int, unless explicitly noted
