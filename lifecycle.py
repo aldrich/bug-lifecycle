@@ -24,26 +24,13 @@ MinimumYear = 2020
 MaximumYear = 2021
 
 
-def getTickets(phab, dateStart, dateEnd, projectsStr, onlyBugs, trackAllProjects):
-
-    projectSlugs = getSlugs(projectsStr) if projectsStr else ''
-    projectPHIDs = [ProjectPHIDMap[slug] for slug in projectSlugs]
+def getTicketData(phab, dateStart, dateEnd, projectsStr, onlyBugs):
 
     constraints = {}
 
-    shouldConstraintSubtypes = onlyBugs
-    if not projectSlugs:
-        validTags = ', '.join(list(ProjectPHIDMap.keys()))
-        log(
-            f'No valid project tags were recognized. Please include at least one of \
-the following: {validTags}', isError=True)
-        shouldConstraintSubtypes = True
-    else:
-        # projects is an ALL-sesarch. Only results which match all projectPHIDs are returned
-        constraints['projects'] = projectPHIDs
-        # we can decide later if subtypes can optionally be applied to this case as well
+    shouldConstrainToBugSubtypes = onlyBugs
 
-    if shouldConstraintSubtypes:
+    if shouldConstrainToBugSubtypes:
         log('Restricting ticket search to "Bug" subtypes.')
         constraints['subtypes'] = ['bugcategorization', 'bugcat']
 
@@ -53,32 +40,37 @@ the following: {validTags}', isError=True)
     if dateEnd:
         constraints['createdEnd'] = dateEnd
 
-    log(f'Valid project slugs in query: {projectSlugs}.')
-    log(f'Constraints to maniphest.search: {json.dumps(constraints)}')
+    validProjectSlugs = getProjectSlugs(projectsStr) if projectsStr else ''
 
     tickets = {}
 
-    # add all the other slugs not named (if desired)
-    if trackAllProjects:
-        log('Tracking timestamps for all listed projects')
-        projectSlugs = list(ProjectPHIDMap.keys())
+    for slug in validProjectSlugs:
+        projectPHID = ProjectPHIDMap[slug]
+        # log(f'Fetching tickets for {slug} (PHID: {projectPHID})')
+        ticks = getTicketForProject(phab=phab,
+                                    projectPHID=projectPHID,
+                                    constraints=constraints,
+                                    onlyBugs=onlyBugs)
 
-    getTicketForProject(phab)
+        log(f'{len(ticks)} ticket(s) found for {slug}')
+        tickets.update(ticks)
 
-    return
+    # log(f'{len(tickets)} found for {len(validProjectSlugs)} projects')
+
+    idNumbers = [int(id) for id in list(tickets.keys())]
 
     chunkedIdNumbers = list(chunks(idNumbers, FetchBatchSize))
-    fields = ticketFieldsBase() + ticketFields(projectSlugs) + ticketFieldsCustom()
+    fields = ticketFieldsBase() + ticketFields(validProjectSlugs) + ticketFieldsCustom()
 
     for idChunk in chunkedIdNumbers:
-        page = page + 1
-        timestamps = getTransactions(phab, projectSlugs, idChunk)
+        # page = page + 1
+        timestamps = getTransactions(phab, validProjectSlugs, idChunk)
         if len(timestamps) > 0:
             mergeTicketDicts(tickets, timestamps)
         else:
             log('No data found! Try a different query.', isError=True)
 
-    for key, tick in tickets.items():
+    for _, tick in tickets.items():
         dateClosed = tick['dateClosed'] or 0
         if 'qa_verified' in tick.keys():
             dateQAVerified = tick['qa_verified']
@@ -90,17 +82,20 @@ the following: {validTags}', isError=True)
     printTicketData(tickets, fields)
 
 
-def getTicketForProject(phab):
+def getTicketForProject(phab, projectPHID, constraints, onlyBugs):
     # Fetch ticket info through `maniphest.search`:
     # https://phabricator.tools.flnltd.com/conduit/method/maniphest.search/
     #
     timestampNow = int(datetime.timestamp(datetime.now()))
+    tickets = {}
+    constraints['projects'] = [projectPHID]
+    # log(f'Constraints to maniphest.search: {json.dumps(constraints)}')
 
     after = None
-    page = 1
-    log(f'Pulling Maniphest tickets')
+    # page = 1
+
     while True:
-        page = page + 1
+        # page = page + 1
         result = phab.maniphest.search(constraints=constraints,
                                        limit=FetchBatchSize,
                                        after=after)
@@ -128,10 +123,7 @@ def getTicketForProject(phab):
         if after == None:
             break
 
-    idNumbers = [int(id) for id in list(tickets.keys())]
-    itemName = 'bugs' if onlyBugs else 'tickets'
-    log(f'{len(idNumbers)} {itemName} found in total')
-    pass
+    return tickets
 
 
 def chunks(lst, n):
@@ -176,7 +168,7 @@ def ticketFieldsBase():
     # all fields have type int, unless explicitly noted
     return [
         'id',
-        'phid',  # string
+        # 'phid',  # string
         'status',  # string
         'priority',
         'created',
@@ -189,7 +181,7 @@ def ticketFieldsBase():
 
 
 def ticketFields(projects):
-    return [f'tagged_{value}' for value in projects]
+    return [f't_{value}' for value in projects]
 
 
 def ticketFieldsCustom():
@@ -247,7 +239,7 @@ def getTransactions(phab, projectSlugs, ids=[]):
                     timestamps[id][f'qa_verified'] = timestamp
                 for projectSlug in projectSlugs:
                     if isTagged(txn, projectSlug):
-                        timestamps[id][f'tagged_{projectSlug}'] = timestamp
+                        timestamps[id][f't_{projectSlug}'] = timestamp
 
     return timestamps
 
@@ -306,9 +298,20 @@ def getDateRange(cycle, year):
     return (dateOpen, dateClose)
 
 
-def getSlugs(string):
+def getProjectSlugs(string):
     trimmed = [s.strip() for s in string.split(',')]
-    return [s for s in trimmed if s in ProjectPHIDMap.keys()]
+    ret = []
+    badSlugs = []
+    for s in trimmed:
+        if s in ProjectPHIDMap.keys():
+            ret.append(s)
+        else:
+            badSlugs.append(s)
+
+    if len(badSlugs) > 0:
+        log(
+            f'You have mispelled some project tags: {", ".join(badSlugs)}', isError=True)
+    return ret
 
 
 def log(obj, isError=False, ignoreQuiet=False):
@@ -340,10 +343,6 @@ def loadConfig(isDev, isQuiet):
     # a if a is not None else b
     phidsConfigKey = 'PHIDs_Dev' if isDev else 'PHIDs'
     phabricatorConfigKey = 'Phabricator_Dev' if isDev else 'Phabricator'
-
-    projectMap = {}
-    # for key in config[phidsConfigKey]:
-    #     projectMap[key] = config[phidsConfigKey][key]
 
     # ProjectPHIDMap = projectMap
     QAVerifiedProjectPHID = config[phabricatorConfigKey]['qa_verified_project_phid']
@@ -405,15 +404,14 @@ project / tag had been first assigned to the ticket.
 
     slugMap = fetchPHIDMapFromProjectsString(phab, projects)
     ProjectPHIDMap.update(slugMap)
-    log(ProjectPHIDMap)
 
     dateRange = checkDateParams(created_in_cycle, start_date, end_date)
     if dateRange == None:
         return
     (dateStart, dateEnd) = dateRange
 
-    getTickets(phab, dateStart, dateEnd, projects,
-               only_bugs, track_all_projects)
+    getTicketData(phab, dateStart, dateEnd, projects,
+                  only_bugs)
 
 
 def fetchPHIDMapFromProjectsString(phab, projects):
