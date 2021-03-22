@@ -74,11 +74,11 @@ def getTicketData(phab, dateStart, dateEnd, projectsStr, onlyBugs):
         dateClosed = tick['dateClosed'] or 0
         if 'qa_verified' in tick.keys():
             dateQAVerified = tick['qa_verified']
-            tick['qa_verified_to_close'] = - \
+            tick['qa_verified_to_closed'] = - \
                 1 if dateClosed == 0 else int(
                     (dateClosed - dateQAVerified) / 86400)
         else:
-            tick['qa_verified_to_close'] = -1
+            tick['qa_verified_to_closed'] = -1
     printTicketData(tickets, fields)
 
 
@@ -112,11 +112,11 @@ def getTicketForProject(phab, projectPHID, constraints, onlyBugs):
                 'id': ticket['id'],
                 'phid': ticket['phid'],
                 'title': ticket['fields']['name'],
-                'status': ticket['fields']['status']['name'],
+                'status': ticket['fields']['status']['name'].upper(),
                 'priority': ticket['fields']['priority']['value'],
                 'dateCreated': dateCreated,
                 'dateClosed': dateClosed,
-                'days_open_to_close': daysToClose,  # from open
+                'days_open_to_closed': daysToClose,  # from open
                 'timestamp': timestampNow,
             }
 
@@ -174,8 +174,8 @@ def ticketFieldsBase():
         'created',
         'closed',
         'qa_verified',
-        'days_open_to_close',
-        'qa_verified_to_close',
+        'days_open_to_closed',
+        'qa_verified_to_closed',
         'timestamp'
     ]
 
@@ -363,14 +363,14 @@ def loadConfig(isDev, isQuiet):
 
 
 @click.command()
-@click.option('--created-in-cycle', '-cc', type=click.STRING,
+@click.option('--cycle', '-c', type=click.STRING,
               help='The year and cycle in which the tickets were created the format is YYYYCX, \
 where YYYY is the year and X is a number between 1 and 6. For example: "2021C1". If used, neither \
 of --start-date or --end-date should be used.')
-@click.option('--start-date', type=click.INT,
+@click.option('--start-date', '-s', type=click.INT,
               help='Earliest timestamp for tickets in \
 query. If used, must also include --end-date, and --created-in-cycle should be omitted.')
-@click.option('--end-date', type=click.INT,
+@click.option('--end-date', '-e', type=click.INT,
               help='Latest timestamp for tickets in \
 query. If used, must also include --start-date, and --created-in-cycle should be omitted.')
 @click.option('--projects', '-p',
@@ -382,18 +382,18 @@ Note: All VALID tags found will be used in the ticket search.')
               help='If enabled, will record timestamps in which a ticket is tagged with a \
 project, for each project listed in the [PHIDs] section in config.ini (this includes projects \
 not named in --projects). Note that `qa_verified` is always tracked.')
-@click.option('--only-bugs',
+@click.option('--only-bugs', '-b',
               is_flag=True,
               help='If set, only return tickets with the Bug \
 subtype. This option is automatically set when no recognized projects were specified.')
-@click.option('--dev',
+@click.option('--dev', '-d',
               is_flag=True,
               help='Run on a local Phabricator instance (specify \
     params on config.ini)')
 @click.option('--quiet', '-q',
               is_flag=True,
               help='Suppress stdout generation unrelated to the final output')
-def cli(created_in_cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev, quiet):
+def cli(cycle, start_date, end_date, projects, track_all_projects, only_bugs, dev, quiet):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
@@ -405,7 +405,7 @@ project / tag had been first assigned to the ticket.
     slugMap = fetchPHIDMapFromProjectsString(phab, projects)
     ProjectPHIDMap.update(slugMap)
 
-    dateRange = checkDateParams(created_in_cycle, start_date, end_date)
+    dateRange = checkDateParams(cycle, start_date, end_date)
     if dateRange == None:
         return
     (dateStart, dateEnd) = dateRange
@@ -431,7 +431,7 @@ def checkDateParams(createdInCycle, startDate, endDate):
     # check params
     if createdInCycle != None and (startDate != None or endDate != None):
         log(
-            'Please include only one of --created-in-cycle, or --start-date/--end-date', isError=True)
+            'Please include only one of --cycle, or --start-date/--end-date', isError=True)
         return None
 
     if createdInCycle != None:
