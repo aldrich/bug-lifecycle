@@ -172,7 +172,7 @@ def getTicketForProject(phab, projectPHID, constraints):
                 'phid': ticket['phid'],
                 'title': ticket['fields']['name'],
                 'status': ticket['fields']['status']['name'].upper(),
-                'priority': ticket['fields']['priority']['value'],
+                'priority': ticket['fields']['priority']['name'].upper(),
                 'dateCreated': dateCreated,
                 'dateClosed': dateClosed,
                 'days_open_to_closed': daysToClose,  # from open
@@ -194,7 +194,7 @@ def chunks(lst, n):
 def fieldValuesTuple(ticket, fields):
     fieldValues = []
     for fieldname in fields:
-        if fieldname in ['phid', 'status', 'title', 'id']:
+        if fieldname in ['phid', 'status', 'title', 'id', 'priority']:
             value = ticket.get(fieldname, '-')
             if fieldname == 'id':
                 value = 'T' + str(value)
@@ -221,7 +221,7 @@ def getTicketDataAsString(tickets, fields, outFormat=OutputFormat.CSV):
 
         formatElements = []
         for fieldname in fields:
-            if fieldname in ['phid', 'status', 'title', 'id']:
+            if fieldname in ['phid', 'status', 'title', 'id', 'priority']:
                 formatElements.append('%s')
             else:
                 formatElements.append('%d')
@@ -242,7 +242,7 @@ def ticketFieldsBase():
     return [
         'id',
         'status', # is string
-        'priority',
+        'priority', # is string
         'created',
         'closed',
         'qa_verified',
