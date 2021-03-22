@@ -17,6 +17,52 @@ CustomFieldsEnabled = []
 QuietMode = False
 FetchBatchSize = 50
 
+# This is the main method and entry point
+@click.command()
+@click.option('--cycle', '-c', type=click.STRING,
+              help='The year and cycle in which the tickets were created. The value should \
+be a string that looks like "2021C1". If this option is used, neither of --start-date or \
+--end-date must also be used.')
+@click.option('--start-date', '-s', type=click.INT,
+              help='Earliest creation date (UNIX epoch timestamp) for tickets in \
+query. If used, must also include --end-date, and --created-in-cycle should be omitted.')
+@click.option('--end-date', '-e', type=click.INT,
+              help='Latest creation date (UNIX epoch timestamp) for tickets in \
+query. If used, must also include --start-date, and --created-in-cycle should be omitted.')
+@click.option('--projects', '-p',
+              prompt='Project tags (comma-separated)',
+              help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
+For best results, avoid inputting a long list of projects.')
+@click.option('--only-bugs', '-b',
+              is_flag=True,
+              help='If set, only return tickets with the "Bug Categorization" subtype.')
+@click.option('--quiet', '-q',
+              is_flag=True,
+              help='Suppress stdout generation unrelated to the final output')
+def cli(cycle, start_date, end_date, projects, only_bugs, quiet):
+    """This is a commandline tool to load Maniphest tickets created
+within a time period (e.g. year and cycle), and outputs timestamps for
+each, including for open and closed date, as well as the dates when a
+given project / tag is first assigned to the ticket.
+    """
+    phab = loadConfig(quiet)
+
+    projects = projects.lower()
+    slugMap = fetchPHIDMapFromProjectsString(phab, projects)
+    ProjectPHIDMap.update(slugMap)
+    validProjectSlugs = getProjectSlugs(projects) if projects else ''
+
+    dateRange = checkDateParams(cycle, start_date, end_date)
+    if dateRange == None:
+        return
+    (dateStart, dateEnd) = dateRange
+
+    # This is the output for the ticket data requested that we should be adding to
+    # Dashboard
+    tickets = getTicketData(phab, dateStart, dateEnd, validProjectSlugs, only_bugs)
+
+    fields = ticketFieldsBase() + ticketFields(validProjectSlugs) + ticketFieldsCustom()
+    printTicketDataCSV(tickets, fields)
 
 def getTicketData(phab, dateStart, dateEnd, validProjectSlugs, onlyBugs):
     """
@@ -360,6 +406,7 @@ def getProjectSlugs(string):
     Using values from ProjectPHIDMap, return a list of only the valid slug names
     from a string containing a comma-separated list inputted by the user.
     """
+
     trimmed = [s.strip() for s in string.split(',')]
     ret = []
     badSlugs = []
@@ -455,57 +502,6 @@ def getDateRangeFromCycleStr(cycleStr):
         return None
 
     return(getDateRange(cycle, year))
-
-
-@click.command()
-@click.option('--cycle', '-c', type=click.STRING,
-              help='The year and cycle in which the tickets were created. The value should \
-be a string that looks like "2021C1". If this option is used, neither of --start-date or \
---end-date must also be used.')
-@click.option('--start-date', '-s', type=click.INT,
-              help='Earliest creation date (UNIX epoch timestamp) for tickets in \
-query. If used, must also include --end-date, and --created-in-cycle should be omitted.')
-@click.option('--end-date', '-e', type=click.INT,
-              help='Latest creation date (UNIX epoch timestamp) for tickets in \
-query. If used, must also include --start-date, and --created-in-cycle should be omitted.')
-@click.option('--projects', '-p',
-              prompt='Project tags (comma-separated)',
-              help='Comma-separated list of project tags (e.g. "messaging,client_success"). \
-For best results, avoid inputting a long list of projects.')
-@click.option('--only-bugs', '-b',
-              is_flag=True,
-              help='If set, only return tickets with the "Bug Categorization" subtype.')
-@click.option('--quiet', '-q',
-              is_flag=True,
-              help='Suppress stdout generation unrelated to the final output')
-def cli(cycle, start_date, end_date, projects, only_bugs, quiet):
-    """This is a commandline tool to load Maniphest tickets created
-within a time period (e.g. year and cycle), and outputs timestamps for
-each, including for open and closed date, as well as the dates when a
-given project / tag is first assigned to the ticket.
-    """
-
-    phab = loadConfig(quiet)
-
-    projects = projects.lower()
-
-    slugMap = fetchPHIDMapFromProjectsString(phab, projects)
-    ProjectPHIDMap.update(slugMap)
-
-    dateRange = checkDateParams(cycle, start_date, end_date)
-    if dateRange == None:
-        return
-    (dateStart, dateEnd) = dateRange
-
-    validProjectSlugs = getProjectSlugs(projects) if projects else ''
-
-    fields = ticketFieldsBase() + ticketFields(validProjectSlugs) + ticketFieldsCustom()
-
-    # This is the output for the ticket data requested that we should be adding to
-    # Dashboard
-    tickets = getTicketData(phab, dateStart, dateEnd, validProjectSlugs, only_bugs)
-
-    printTicketDataCSV(tickets, fields)
 
 
 if __name__ == '__main__':
