@@ -1,41 +1,58 @@
 # Bug Lifecycle Scripts
 
-Gather stats about bugs for further analysis
+A Python script that gather stats about Maniphest bug tickets for further analysis
 
 ### Requirements
 
-- Python 3
-- virtualenv
+- [virtualenv](https://virtualenv.pypa.io/en/latest/)
 
 ### Setup
 
-You will need to do this once, during setup.
+You will need to do this once, during setup. In the script folder, do the following
 
 - `virtualenv venv`
 - `. venv/bin/activate`
-- `pip3 install --editable .`
+- `pip install -e .`
 
-Edit the values found within config.ini, particularly your Conduit API token, which you can find in Settings. Also, in the `[PHIDs]` section add the PHIDs of the projects you want to track, otherwise they won't be usable in the query.
+Edit the values found within config.ini, particularly your Conduit API Token, which you can find in the [Settings](https://phabricator.tools.flnltd.com/settings) page.
 
 In subsequent calls, it is sufficient to just go to the directory of the script and do the following:
 
 - `. venv/bin/activate` whenever entering the directory
-- `lifecycle` (with arguments, if desired)
+- `lifecycle`
 
 Please also check the options available from `lifecycle --help`. This is an example:
 
 ```
-venv ❯ lifecycle -c 6 -y 2020 -p capacitor,messaging
+venv ❯ lifecycle -c 2021c2 -p capacitor_app,messaging -f csv -b
 ```
 
-This pulls all tickets _created_ in 2020 Cycle 6 (November-December) and that have the tags #capacitor AND #messaging.
+This pulls all tickets _created_ in 2021 Cycle 2 (March-April), with the project tags #capacitor_app AND #messaging. The output format is CSV (JSON is also supported), and only bugs (read: those with 'Bug' ticket subtype) are returned.
 
-The output should go to a CSV file that looks like the following:
+The output should go to `stdout` that looks like the following:
 
 ```
-id,phid,status,priority,created,closed,qa_verified,tagged_capacitor,tagged_client_success,tagged_data_science_infrastructure,tagged_design,tagged_freelancer_groups,tagged_freightlancer_x_local_jobs,tagged_messaging,tagged_qa_verified
-T235313,PHID-TASK-jzzfv3favkg2nepovli7,Resolved,100,1615565541,1615777558,0,0,0,0,0,0,0,0,0
-T234601,PHID-TASK-mm7nfmyi3zupjr6pm7fc,Open,100,1614911477,0,0,0,0,0,0,0,0,0,0
-T235398,PHID-TASK-xk4e4ephgpjgirg2fdsj,Open,90,1615775295,0,0,0,0,0,0,0,0,0,0
-T235393,PHID-TASK-xngr5ch3nwbkbwqdcs4h,Open,90,1615773431,0,0,0,0,0,0,0,0,0,0
+id,status,priority,created,closed,qa_verified,days_open_to_closed,qa_verified_to_closed,timestamp,t_capacitor_app,t_messaging
+T234536,OPEN,LOW,1614841620,0,1614841620,-1,-1,1616417873,1614841620,0
+T234519,OPEN,LOW,1614831037,0,1614831037,-1,-1,1616417873,1614831037,0
+T234344,RESOLVED,LOW,1614674387,1616400179,1614674387,19,19,1616417873,1614674387,0
+T234343,OPEN,LOW,1614674028,0,1614674028,-1,-1,1616417873,1614674028,0
+T234234,OPEN,LOW,1614589203,0,1614589203,-1,-1,1616417873,1614589203,0
+T234214,OPEN,LOW,1614577576,0,1614577576,-1,-1,1616417874,1614577576,1614577576
+T234348,OPEN,NEEDS TRIAGE,1614680241,0,0,-1,-1,1616417874,0,1614681806
+T234242,OPEN,LOW,1614599260,0,0,-1,-1,1616417874,0,1614599260
+T234473,OPEN,WISHLIST,1614792928,0,0,-1,-1,1616417874,0,1614866664
 ```
+
+An explanation of some of the columns:
+
+- `id` - the Maniphest ticket ID.
+- `status` - one of OPEN, RESOLVED, WONTFIX, INVALID, DUPLICATE
+- `priority` - ticket priority
+- `created` - timestamp from when the ticket was created
+- `closed` - timestamp from when the ticket was first closed.
+- `qa_verified` - timestamp from when the ticket was first tagged 'QA Verified'
+- `days_open_to_closed` - number of days between ticket is opened and when it is closed (-1 if still open)
+- `qa_verified_to_closed` - number of days between ticket is tagged 'QA Verified' and when it is closed (-1 if still open, or when not tagged)
+- `timestamp` - timestamp from when the API returned the results for this ticket
+- `t_capacitor_app`, `t_messaging`, ...etc - indicates the timestamp from when a ticket is tagged with one of the projects given in the params
