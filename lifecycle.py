@@ -323,7 +323,7 @@ def log(obj, isError=False, ignoreQuiet=False):
         click.echo(obj)
 
 
-def loadConfig(isDev, isQuiet):
+def loadConfig(isQuiet):
 
     global ProjectPHIDMap
     global QAVerifiedProjectPHID
@@ -333,17 +333,10 @@ def loadConfig(isDev, isQuiet):
 
     QuietMode = isQuiet
 
-    log('Loading config')
-
-    if isDev:
-        log('Development mode on')
-
     config = configparser.ConfigParser()
     config.read('config.ini')
 
-    # a if a is not None else b
-    phidsConfigKey = 'PHIDs_Dev' if isDev else 'PHIDs'
-    phabricatorConfigKey = 'Phabricator_Dev' if isDev else 'Phabricator'
+    phabricatorConfigKey = 'Phabricator'
 
     # ProjectPHIDMap = projectMap
     QAVerifiedProjectPHID = config[phabricatorConfigKey]['qa_verified_project_phid']
@@ -365,7 +358,6 @@ def loadConfig(isDev, isQuiet):
 """
 TODO:
 - clean up
-- remove dev
 - add comments per function
 - improve documentation
 - add a JSON output option
@@ -394,21 +386,19 @@ Note: All VALID tags found will be used in the ticket search.')
               is_flag=True,
               help='If set, only return tickets with the Bug \
 subtype. This option is automatically set when no recognized projects were specified.')
-@click.option('--dev', '-d',
-              is_flag=True,
-              help='Run on a local Phabricator instance (specify \
-    params on config.ini)')
 @click.option('--quiet', '-q',
               is_flag=True,
               help='Suppress stdout generation unrelated to the final output')
-def cli(cycle, start_date, end_date, projects, only_bugs, dev, quiet):
+def cli(cycle, start_date, end_date, projects, only_bugs, quiet):
     """This is a commandline tool to load Maniphest tickets created
 within a time period (year and cycle), and collects timestamps for
 each, including for open and closed date, and the dates when a given
 project / tag had been first assigned to the ticket.
     """
 
-    phab = loadConfig(dev, quiet)
+    phab = loadConfig(quiet)
+
+    projects = projects.lower()
 
     slugMap = fetchPHIDMapFromProjectsString(phab, projects)
     ProjectPHIDMap.update(slugMap)
