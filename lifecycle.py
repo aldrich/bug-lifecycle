@@ -537,8 +537,7 @@ if __name__ == '__main__':
 
 """
 TODO:
-- improve documentation
-- add a JSON output option
-- add `--only-closed` option
-- sort by some specified category
+- improve the README
+- add `--only-closed` option (only tickets with non-zero closed time will be returned)
+- (maybe) sort by some specified category
 """
