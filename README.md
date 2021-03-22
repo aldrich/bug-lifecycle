@@ -5,6 +5,7 @@ A Python script that gather stats about Maniphest bug tickets for further analys
 ### Requirements
 
 - [virtualenv](https://virtualenv.pypa.io/en/latest/)
+- You will need a Phabricator account and a [Conduit API Token](https://secure.phabricator.com/book/phabricator/article/conduit/)
 
 ### Setup
 
